@@ -1,0 +1,23 @@
+[package]
+name = "cornell_box"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+phosph_rs = { path = "../../", features = ["wip-features"]}
+wgpu = { git = "https://github.com/Vecvec/wgpu.git", branch = "fix-overwriting-intersection-functions" }
+#wgpu = { path = "../../../wgpu/wgpu" }
+futures = "0.3.30"
+bytemuck = { version =  "1.22.0", features = ["derive"] }
+cgmath = "0.18"
+glfw = "0.58.0"
+oidn = { version = "2.2.4", optional = true }
+
+[dependencies.image]
+version = "0.25.1"
+default-features = false
+features = ["png", "jpeg"]
+
+[features]
+# Requires putting oidn into the correct directory (see its docs)
+denoise = ["oidn"]

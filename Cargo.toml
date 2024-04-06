@@ -1,0 +1,26 @@
+workspace = { members = [ "examples/cornell_box"] }
+[package]
+name = "phosph_rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wgpu = { git = "https://github.com/Vecvec/wgpu.git", branch = "fix-overwriting-intersection-functions" }
+#wgpu = { path = "../wgpu/wgpu" }
+futures = "0.3.30"
+bytemuck = { version =  "1.22.0", features = ["derive"] }
+cgmath = "0.18"
+half = "2.4.1"
+
+[dependencies.image]
+version = "0.25.1"
+default-features = false
+features = ["png", "jpeg"]
+
+[dev-dependencies]
+log = { version = "0.4.22", features = ["max_level_trace"] }
+env_logger = "0.11"
+glfw = "0.59.0"
+
+[features]
+wip-features = []
