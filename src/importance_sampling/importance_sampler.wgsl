@@ -9,14 +9,6 @@ fn jacobian_determinant(q:Sample, r:Sample) -> f32 {
 
 const F32_MAX = 3.40282347e+38;
 
-fn safe_div(numerator: f32, denominator: f32) -> f32 {
-    if (near_zero(denominator))  {
-        return 0.0;
-    } else {
-        return numerator / denominator;
-    }
-}
-
 fn safe_div_vec3(numerator: vec3<f32>, denominator: f32) -> vec3<f32> {
     if (near_zero(denominator))  {
         return vec3<f32>(0.0);
@@ -145,7 +137,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) wor
             Z = Z + (unpack4xU8(Rn.confidence8_valid8).x);
         }
     }
-    let m_i = confidence_i_p_i / confidence_p_sum;
+    let m_i = safe_div(confidence_i_p_i, confidence_p_sum);
     let Z_times_p_hat = f32(Z)
         //;
         //* pdf(Rs_normal, normalize(to_info(info[idx]).cam_loc - Rs_point), normalize(sam_from_res(Rs).visible_point - Rs_point), sam_from_res(Rs).ty, to_info(info[idx]).albedo, sam_from_res(Rs).roughness);

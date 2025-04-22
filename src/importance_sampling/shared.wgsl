@@ -281,3 +281,11 @@ fn rand_f32(own_seed:u32) -> f32 {
     // fract is to handle edge cases (divide not being perfect)
     return fract(f32(rand_u32(own_seed)) * RECIP_U32_MAX);
 }
+
+fn safe_div(numerator: f32, denominator: f32) -> f32 {
+    if (near_zero(denominator))  {
+        return 0.0;
+    } else {
+        return numerator / denominator;
+    }
+}
