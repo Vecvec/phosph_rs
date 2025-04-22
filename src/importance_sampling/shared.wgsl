@@ -85,7 +85,7 @@ fn update(s_new:Sample, w_new:f32, reservoir: Reservoir, seed:u32, always_update
     var new_reservoir = reservoir;
     new_reservoir.w = new_reservoir.w + w_new;
     new_reservoir.confidence8_valid8 = pack4xU8(min(vec4<u32>(min(unpack4xU8(new_reservoir.confidence8_valid8).x + 1u, CONFIDENCE_CAP), unpack4xU8(new_reservoir.confidence8_valid8).yzw), vec4u(255u)));
-    if (rand_f32(seed) < w_new/new_reservoir.w) {
+    if (rand_f32(seed) * new_reservoir.w < w_new) {
         new_reservoir.visible_point = s_new.visible_point;
         new_reservoir.visible_normal = s_new.visible_normal;
         new_reservoir.sample_point = s_new.sample_point;
@@ -110,7 +110,8 @@ fn merge(reservoir: Reservoir, r: Reservoir, p: f32, seed:u32) -> MergeReturn {
     let w_new = p * r.W * f32(unpack4xU8(r.confidence8_valid8).x);
     new_reservoir.confidence8_valid8 = pack4xU8(min(vec4<u32>(min(unpack4xU8(new_reservoir.confidence8_valid8).x + unpack4xU8(r.confidence8_valid8).x, CONFIDENCE_CAP), unpack4xU8(new_reservoir.confidence8_valid8).yzw), vec4u(255u)));
     new_reservoir.w = new_reservoir.w + w_new;
-    if (rand_f32(seed) < w_new / max(0.001, new_reservoir.w)) {
+    // This is exquivelent to what is done in the paper but avoids `INF`s and `NAN`s which are undefined in WGSL.
+    if (rand_f32(seed) * new_reservoir.w < w_new) {
          new_reservoir.visible_point = r.visible_point;
          new_reservoir.visible_normal = r.visible_normal;
          new_reservoir.sample_point = r.sample_point;
