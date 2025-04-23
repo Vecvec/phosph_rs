@@ -79,22 +79,14 @@ struct WorkgroupLights {
     samples: array<Reservoir>
 }
 
-const CONFIDENCE_CAP = 20u;
+const CONFIDENCE_CAP = 1u;
 
 fn update(s_new:Sample, w_new:f32, reservoir: Reservoir, seed:u32, always_update:bool) -> Reservoir {
     var new_reservoir = reservoir;
     new_reservoir.w = new_reservoir.w + w_new;
     new_reservoir.confidence8_valid8 = pack4xU8(min(vec4<u32>(min(unpack4xU8(new_reservoir.confidence8_valid8).x + 1u, CONFIDENCE_CAP), unpack4xU8(new_reservoir.confidence8_valid8).yzw), vec4u(255u)));
     if (rand_f32(seed) * new_reservoir.w < w_new) {
-        new_reservoir.visible_point = s_new.visible_point;
-        new_reservoir.visible_normal = s_new.visible_normal;
-        new_reservoir.sample_point = s_new.sample_point;
-        new_reservoir.sample_normal = s_new.sample_normal;
-        new_reservoir.out_radiance = s_new.out_radiance;
-        new_reservoir.ty = s_new.ty;
-        new_reservoir.roughness = s_new.roughness;
-        new_reservoir.pdf = s_new.pdf;
-        new_reservoir.confidence8_valid8 = pack4xU8(vec4<u32>(unpack4xU8(new_reservoir.confidence8_valid8).x, 1u, unpack4xU8(new_reservoir.confidence8_valid8).zw));
+        assign_sam_to_res(&new_reservoir, s_new);
     }
     return new_reservoir;
 }
@@ -112,19 +104,23 @@ fn merge(reservoir: Reservoir, r: Reservoir, p: f32, seed:u32) -> MergeReturn {
     new_reservoir.w = new_reservoir.w + w_new;
     // This is exquivelent to what is done in the paper but avoids `INF`s and `NAN`s which are undefined in WGSL.
     if (rand_f32(seed) * new_reservoir.w < w_new) {
-         new_reservoir.visible_point = r.visible_point;
-         new_reservoir.visible_normal = r.visible_normal;
-         new_reservoir.sample_point = r.sample_point;
-         new_reservoir.sample_normal = r.sample_normal;
-         new_reservoir.out_radiance = r.out_radiance;
-         new_reservoir.ty = r.ty;
-         new_reservoir.roughness = r.roughness;
-         new_reservoir.pdf = r.pdf;
+         assign_sam_to_res(&new_reservoir, sam_from_res(r));
          picked_r = true;
-         new_reservoir.confidence8_valid8 = pack4xU8(vec4<u32>(unpack4xU8(new_reservoir.confidence8_valid8).x, 1u, unpack4xU8(new_reservoir.confidence8_valid8).zw));
     }
     //new_reservoir.W = new_reservoir.w / (p_hat(new_reservoir.sam, u32_to_normalised(new_reservoir.sam.sample_normal), new_reservoir.sam.sample_point));
     return MergeReturn(new_reservoir, picked_r);
+}
+
+fn assign_sam_to_res(reservoir: ptr<function, Reservoir>, s_new: Sample) {
+    reservoir.visible_point = s_new.visible_point;
+    reservoir.visible_normal = s_new.visible_normal;
+    reservoir.sample_point = s_new.sample_point;
+    reservoir.sample_normal = s_new.sample_normal;
+    reservoir.out_radiance = s_new.out_radiance;
+    reservoir.ty = s_new.ty;
+    reservoir.roughness = s_new.roughness;
+    reservoir.pdf = s_new.pdf;
+    reservoir.confidence8_valid8 = pack4xU8(vec4<u32>(unpack4xU8((*reservoir).confidence8_valid8).x, 1u, unpack4xU8((*reservoir).confidence8_valid8).zw));
 }
 
 fn sam_from_res(r: Reservoir) -> Sample {

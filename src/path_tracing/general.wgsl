@@ -147,7 +147,7 @@ fn rt_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) 
     textureStore(output_normal, id.xy, vec4<f32>(pixel_normal, 1.0));
     textureStore(output_albedo, id.xy, vec4<f32>(pixel_albedo, 1.0));
     textureStore(output, id.xy, vec4<f32>(max(pixel_color / f32(SAMPLES), vec3<f32>(0.0)), 1.0));
-    //textureStore(output, id.xy, vec4<f32>(vec3((pdf)), 1.0));
+    //textureStore(output, id.xy, vec4<f32>(vec3((lights.samples[idx].W / 5.0)), 1.0));
 }
 
 struct SampleReturn {

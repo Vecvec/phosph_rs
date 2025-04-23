@@ -65,4 +65,4 @@ by enabling the feature `denoise` which uses oidn (you may have to do some copyi
 ## Features in development
 
 ### Importance Sampling
-Note that this is WIP and not functional
+Note that this is WIP and only partially functional
