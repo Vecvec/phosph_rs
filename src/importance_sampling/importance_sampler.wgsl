@@ -142,9 +142,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) wor
         //;
         //* pdf(Rs_normal, normalize(to_info(info[idx]).cam_loc - Rs_point), normalize(sam_from_res(Rs).visible_point - Rs_point), sam_from_res(Rs).ty, to_info(info[idx]).albedo, sam_from_res(Rs).roughness);
         *p_hat(sam_from_res(Rs));
+    //TODO: this is biased if the distributions are different. We should get a better distribution (below is one that is not working but would be much better).
     Rs.W = safe_div(Rs.w, Z_times_p_hat);
-    //TODO: this is biased if the distributions are different. We should get a better distribution.
-    //Rs.W = Rs.w / max(0.0001, f32(unpack4xU8(Rs.M_valid).x));
     //Rs.W = (confidence_i_p_i * Rs.w) / (confidence_p_sum * p_hat(sam_from_res(Rs)));
     //storageBarrier();
     //lights.samples[idx] = Rs;
