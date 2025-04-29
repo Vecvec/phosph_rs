@@ -66,7 +66,7 @@ pub unsafe trait RayTracingShader: Sized + 'static {
         // limits required to interact
         Limits {
             max_push_constant_size: 4,
-            max_storage_buffer_binding_size: 2 * Limits::default().max_storage_buffer_binding_size,
+            max_storage_buffer_binding_size: Limits::default().max_storage_buffer_binding_size,
             // see docs for why 500,000.
             max_binding_array_elements_per_shader_stage: 500_000,
             ..Limits::default()
@@ -76,7 +76,7 @@ pub unsafe trait RayTracingShader: Sized + 'static {
         // limits required to interact
         Limits {
             max_push_constant_size: 4.max(limit.max_push_constant_size),
-            max_storage_buffer_binding_size: (2 * Limits::default()
+            max_storage_buffer_binding_size: (Limits::default()
                 .max_storage_buffer_binding_size)
                 .max(limit.max_storage_buffer_binding_size),
             max_binding_array_elements_per_shader_stage: 500_000
