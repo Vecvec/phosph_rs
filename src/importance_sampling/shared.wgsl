@@ -279,8 +279,12 @@ fn rand_f32(own_seed:u32) -> f32 {
 }
 
 fn safe_div(numerator: f32, denominator: f32) -> f32 {
+    return div_or(numerator, denominator, 0.0);
+}
+
+fn div_or(numerator: f32, denominator: f32, or: f32) -> f32 {
     if (near_zero(denominator))  {
-        return 0.0;
+        return or;
     } else {
         return numerator / denominator;
     }

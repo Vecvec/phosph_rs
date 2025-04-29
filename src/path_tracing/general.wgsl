@@ -81,6 +81,54 @@ override IS_SAMPLES = 64u;
 const RESAMPLE_MIN = 50u;
 const RESAMPLE_MAX = 100u;
 
+struct MarcovChainState {
+    light_source: vec3<f32>,
+    mean_cosine: f32,
+    weight_sum: f32,
+    num_samples: u32,
+    score: f32,
+}
+
+// TODO: Move this into a inter pixel buffer so all pixels can sample from it.
+// S in the paper.
+var<private> tentative_marcov_chain_state: MarcovChainState;
+
+// Sc in the paper.
+var<private> current_marcov_chain_state: MarcovChainState;
+
+fn marcov_chain_valid(state: MarcovChainState) -> bool {
+    return state.weight_sum > 0.0;
+}
+
+// Moved the number in the paper outside to a constant.
+const MARCOV_CHAIN_SAMPLE_CLAMP = 1024;
+const FLOAT_MAX = 3.40282347E+38;
+
+// x0 is never used so we don't include it.
+fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, pdf: f32, p_hat: f32, seed: u32, hemisphere_sample: bool) {
+    let score = safe_div(p_hat, pdf);
+    let a = min(1.0, div_or(score, current_marcov_chain_state.score, FLOAT_MAX));
+    let rand = rand_f32(seed);
+    if ((score > 0.0) && (!marcov_chain_valid(current_marcov_chain_state) || rand < a)) { // May want to convert this to be closer to the GI update.
+        if hemisphere_sample {
+            tentative_marcov_chain_state = MarcovChainState();
+        }
+        tentative_marcov_chain_state.score = score;
+        current_marcov_chain_state = tentative_marcov_chain_state;
+    }
+    tentative_marcov_chain_state.num_samples = min(tentative_marcov_chain_state.num_samples + 1, MARCOV_CHAIN_SAMPLE_CLAMP);
+    let alpha = max(div_or(1.0, f32(tentative_marcov_chain_state.num_samples), FLOAT_MAX), 0.1);
+    // WGSL mix is the same as the one in the paper.
+    let weight_sum = mix(tentative_marcov_chain_state.weight_sum, score, alpha);
+    tentative_marcov_chain_state.light_source = mix(tentative_marcov_chain_state.weight_sum * tentative_marcov_chain_state.light_source, score * x2, alpha);
+    let mean = normalize(tentative_marcov_chain_state.light_source - x1);
+    // Instead of mean_cosine there was something else in the paper, but there is no such field in
+    // MarcovChainState and it isn't accessed anywhere else and r isn't accessed here so assuming it's r.
+    let omega = mix(tentative_marcov_chain_state.weight_sum * tentative_marcov_chain_state.mean_cosine * mean, score * normalize(x2 - x1), alpha);
+    tentative_marcov_chain_state.mean_cosine = saturate(length(omega));
+    tentative_marcov_chain_state.weight_sum = weight_sum;
+}
+
 @workgroup_size(8, 8, 1)
 @compute
 fn rt_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) work_id: vec3<u32>) {
@@ -194,10 +242,17 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
     var accum_emission = vec3<f32>();
     var accum_albedo = vec3<f32>(1.0);
     var picked = PickedRefIdx();
+    var cached_pdf: f32;
     for (var i = 0u; i < BOUNCES; i++) {
         let intersection = ray_hit(&ray);
         if (intersection.hit) {
-            ray.origin = at(&ray, intersection.t);
+            let new_pos = at(&ray, intersection.t);
+            // We have at least hit the scene twice (this is our second time)
+            if (i > 1u) {
+                update_marcov_state(ray.origin, new_pos, cached_pdf, length(intersection.emission), self_seed, false/*todo*/);
+                self_seed++;
+            }
+            ray.origin = new_pos;
             accum_emission = fma(intersection.emission, accum_albedo, accum_emission);
             accum_albedo *= intersection.color;
             if (i == 0u) {
@@ -287,7 +342,60 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                     } else {
                         ray.direction = direction;
                     }*/
-                    let diffuse = handle_diffuse(intersection.color, ray, intersection.normal, intersection.tangent, intersection.roughness.x, self_seed, should_push);
+                    let rand = rand_f32(self_seed);
+                    self_seed = self_seed + 1u;
+                    var dir: vec3<f32>;
+                    var cosine_weight = 1.0;
+                    if (!marcov_chain_valid(tentative_marcov_chain_state) || !vec3_near_zero(intersection.emission)) {
+                        cosine_weight = 1.0;
+                    }
+                    var i: u32;
+                    // Prepare for markov chain
+                    let mean = normalize(tentative_marcov_chain_state.light_source - ray.origin);
+                    const Np = 0.2;
+                    // TODO: use rp mix, that was the best in the paper.
+                    let rp = 0.5;
+                    // Not exactly sure what N is supposed to be in this case.
+                    let N = tentative_marcov_chain_state.num_samples;
+                    let N_sqrd = f32(N * N);
+                    let r = ((N_sqrd * tentative_marcov_chain_state.mean_cosine) + (Np * rp)) / (N_sqrd + Np);
+                    // We don't want this to be zero or infinity
+                    let kappa = max((3.0 * r) - (r*r*r) / max(1 - (r*r), SMALL_VAL), SMALL_VAL);
+                    // Pick pdf to use
+                    if (rand < cosine_weight) {
+                        dir = cosine_weighted_hemisphere(self_seed, intersection.normal, intersection.tangent);
+                        i = 0;
+                    } else {
+                        let theta = rand_f32(self_seed) * TAU;
+                        let V = vec2<f32>(cos(theta), sin(theta));
+                        self_seed = self_seed + 1u;
+                        let xi = rand_f32(self_seed);
+                        self_seed = self_seed + 1u;
+                        var W = 1.0 + (safe_div(1.0, kappa) * log(xi + ((1.0 - xi) * exp(-2.0 * kappa))));
+                        if (xi == 0.0) {
+                            W = 1.0;
+                        }
+                        let norm_V = sqrt(saturate(1.0 - (W*W)));
+                        let Xs = from_onb_no_tangent(vec3(V.x * norm_V, W, V.y * norm_V), mean);
+                        dir = normalize(Xs);
+                        i = 1;
+                    }
+                    // Calculate pdf of marcov chain
+                    let cos_theta_markov = dot(dir, tentative_marcov_chain_state.light_source);
+                    let fraction = safe_div(kappa, 2.0*PI*(1.0-exp(-2.0*kappa)));
+                    let marcov_pdf = fraction*exp(kappa * (cos_theta_markov - 1.0));
+                    let markov_weight = 1.0 - cosine_weight;
+                    // Calculate pdf of cosine
+                    let cosine_pdf = max(dot(dir, intersection.normal), 0.0);
+                    // Calculate final pdf
+                    var final_pdf: f32;
+                    if (markov_weight == 0.0) {
+                        // markov pdf should not be included because it might be an INF or NAN due to no real sample being possible
+                        final_pdf = cosine_pdf;
+                    } else {
+                        final_pdf = (cosine_pdf * cosine_weight) + (marcov_pdf * markov_weight);
+                    }
+                    let diffuse = make_diffuse(intersection.color, ray, intersection.normal, intersection.tangent, intersection.roughness.x, dir);
                     //let dot = max(dot(dir, normal), 0.0) / dot(dir, intersection.normal);
                     //color = color * dot;
                     //ray.direction = dir;
@@ -295,12 +403,13 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                         sample.color = vec3f(0.0, 1.0, 0.0);
                         return sample;
                     }*/
-                    color = color * diffuse.brightness;
+                    cached_pdf = final_pdf;
+                    let normalization_factor = safe_div(cosine_pdf, final_pdf);
+                    color = color * normalization_factor * diffuse;
                     if (!(i_diffuse == 0u)) {
-                        out_radiance_colour = out_radiance_colour * diffuse.brightness;
+                        out_radiance_colour = out_radiance_colour * normalization_factor;
                     }
-                    ray.direction = diffuse.direction;
-                    self_seed = self_seed + 1u;
+                    ray.direction = dir;
                     previously_diffuse = true;
                     if (i == 0) {
                         sample.pdf = (dot(ray.direction, normal) / PI); // We need a normalized PDF.
@@ -496,7 +605,7 @@ fn rand_on_sphere(own_seed:u32) -> vec3<f32> {
     let u2 = rand_f32(own_seed + 1u);
     let latitude = acos(fma(2.0, u1, -1.0)) - HALF_PI;
     let longitude = TAU * u2;
-    return vec3<f32>(cos(latitude) * cos(longitude), cos(latitude) * sin(longitude), sin(latitude));
+    return to_sphere_from_lat_long(latitude, longitude);
 }
 
 fn rand_on_hemisphere(own_seed:u32) -> vec3<f32> {
@@ -505,6 +614,10 @@ fn rand_on_hemisphere(own_seed:u32) -> vec3<f32> {
     let latitude = acos(fma(2.0, u1, -1.0)) - HALF_PI;
     let longitude = TAU * u2;
     return vec3<f32>(cos(latitude) * cos(longitude), abs(sin(latitude)), cos(latitude) * sin(longitude));
+}
+
+fn to_sphere_from_lat_long(latitude: f32, longitude: f32) -> vec3<f32> {
+    return vec3<f32>(cos(latitude) * cos(longitude), cos(latitude) * sin(longitude), sin(latitude));
 }
 
 fn reflectance(cosine:f32, ref_idx:f32) -> f32 {
@@ -518,6 +631,17 @@ fn from_onb(src:vec3<f32>, up:vec3<f32>, tangent: vec3<f32>) -> vec3<f32> {
     let s = tangent;
     let t = cross(up, s);
     return fma(vec3<f32>(src.x), s, fma(vec3<f32>(src.y), up, (src.z * t)));
+}
+
+fn from_onb_no_tangent(src:vec3<f32>, up:vec3<f32>) -> vec3<f32> {
+    var other_angle: vec3<f32>;
+    if (near_zero(up.x)) {
+        other_angle = vec3(1.0, 0.0, 0.0);
+    } else {
+        other_angle = vec3(0.0, 1.0, 0.0);
+    }
+    let tangent = normalize(cross(up, other_angle));
+    return from_onb(src, up, tangent);
 }
 
 fn onb_cosine_weighted_hemisphere(own_seed:u32) -> vec3<f32> {
