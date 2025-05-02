@@ -125,7 +125,7 @@ fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, pdf: f
     // Instead of mean_cosine there was something else in the paper, but there is no such field in
     // MarcovChainState and it isn't accessed anywhere else and r isn't accessed here so assuming it's r.
     let omega = mix(tentative_marcov_chain_state.weight_sum * tentative_marcov_chain_state.mean_cosine * mean, score * normalize(x2 - x1), alpha);
-    tentative_marcov_chain_state.mean_cosine = saturate(length(omega));
+    tentative_marcov_chain_state.mean_cosine = (length(omega));
     tentative_marcov_chain_state.weight_sum = weight_sum;
 }
 
@@ -248,7 +248,7 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
         if (intersection.hit) {
             let new_pos = at(&ray, intersection.t);
             // We have at least hit the scene twice (this is our second time)
-            if (i > 1u) {
+            if (i > 1u) && (length(intersection.emission) > 0.0) {
                 update_marcov_state(ray.origin, new_pos, cached_pdf, length(intersection.emission), self_seed, false/*todo*/);
                 self_seed++;
             }
@@ -354,11 +354,11 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                     let mean = normalize(tentative_marcov_chain_state.light_source - ray.origin);
                     const Np = 0.2;
                     // TODO: use rp mix, that was the best in the paper.
-                    let rp = 0.5;
-                    // Not exactly sure what N is supposed to be in this case.
+                    let rp = 0.99;
+                    // Not exactly sure what N is supposed to be in this case, but pretty sure it is this.
                     let N = tentative_marcov_chain_state.num_samples;
                     let N_sqrd = f32(N * N);
-                    let r = ((N_sqrd * tentative_marcov_chain_state.mean_cosine) + (Np * rp)) / (N_sqrd + Np);
+                    let r = safe_div(((N_sqrd * tentative_marcov_chain_state.mean_cosine) + (Np * rp)), (N_sqrd + Np));
                     // We don't want this to be zero or infinity
                     let kappa = max((3.0 * r) - (r*r*r) / max(1 - (r*r), SMALL_VAL), SMALL_VAL);
                     // Pick pdf to use
@@ -372,28 +372,35 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                         let xi = rand_f32(self_seed);
                         self_seed = self_seed + 1u;
                         var W = 1.0 + (safe_div(1.0, kappa) * log(xi + ((1.0 - xi) * exp(-2.0 * kappa))));
-                        if (xi == 0.0) {
-                            W = 1.0;
-                        }
                         let norm_V = sqrt(saturate(1.0 - (W*W)));
                         let Xs = from_onb_no_tangent(vec3(V.x * norm_V, W, V.y * norm_V), mean);
                         dir = normalize(Xs);
                         i = 1;
+                        //sample.color = (mean + 1) / 2;
+                        //return sample;
                     }
                     // Calculate pdf of marcov chain
                     let cos_theta_markov = dot(dir, tentative_marcov_chain_state.light_source);
-                    let fraction = safe_div(kappa, 2.0*PI*(1.0-exp(-2.0*kappa)));
-                    let marcov_pdf = fraction*exp(kappa * (cos_theta_markov - 1.0));
+                    let minus_2_kappa = -2.0 * kappa;
+                    let a = safe_div(minus_2_kappa, exp(minus_2_kappa) - 1.0);
+                    let fraction = a / (4.0 * PI);
+                    let marcov_pdf = max(fraction*exp(kappa * (cos_theta_markov - 1.0)), 0.0);
                     let markov_weight = 1.0 - cosine_weight;
                     // Calculate pdf of cosine
-                    let cosine_pdf = max(dot(dir, intersection.normal), 0.0);
+                    let cosine_pdf = max(dot(dir, intersection.normal) / PI, 0.0);
                     // Calculate final pdf
                     var final_pdf: f32;
                     if (markov_weight == 0.0) {
                         // markov pdf should not be included because it might be an INF or NAN due to no real sample being possible
                         final_pdf = cosine_pdf;
                     } else {
-                        final_pdf = (cosine_pdf * cosine_weight) + (marcov_pdf * markov_weight);
+                        var picked: f32;
+                        if (i == 0) {
+                            picked = (cosine_pdf * cosine_weight);
+                        } else {
+                            picked = marcov_pdf * markov_weight;
+                        }
+                        final_pdf = ((cosine_pdf * cosine_weight) + (marcov_pdf * markov_weight));
                     }
                     let diffuse = make_diffuse(intersection.color, ray, intersection.normal, intersection.tangent, intersection.roughness.x, dir);
                     //let dot = max(dot(dir, normal), 0.0) / dot(dir, intersection.normal);
@@ -407,12 +414,12 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                     let normalization_factor = safe_div(cosine_pdf, final_pdf);
                     color = color * normalization_factor * diffuse;
                     if (!(i_diffuse == 0u)) {
-                        out_radiance_colour = out_radiance_colour * normalization_factor;
+                        out_radiance_colour = out_radiance_colour * normalization_factor * diffuse;
                     }
                     ray.direction = dir;
                     previously_diffuse = true;
                     if (i == 0) {
-                        sample.pdf = (dot(ray.direction, normal) / PI); // We need a normalized PDF.
+                        sample.pdf = final_pdf;
                     }
                     //sample.color = vec3f((diffuse.w));
                     //sample.color = ray.direction;
