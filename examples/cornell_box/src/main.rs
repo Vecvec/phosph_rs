@@ -241,6 +241,8 @@ fn main() {
                     target_exe_num as u32,
                     Limits::default().max_binding_array_elements_per_shader_stage,
                 ),
+                min_subgroup_size: adapter.limits().min_subgroup_size,
+                max_subgroup_size: adapter.limits().max_subgroup_size,
                 ..Limits::default()
             }),
             memory_hints: wgpu::MemoryHints::default(),

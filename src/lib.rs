@@ -176,8 +176,8 @@ pub struct DispatchSize {
 /// calculate the size for a dispatch of the ray-tracing compute function
 pub fn dispatch_size(width: u32, height: u32) -> DispatchSize {
     DispatchSize {
-        width: width.div_ceil(8),
-        height: height.div_ceil(8),
+        width: width.div_ceil(64),
+        height: height.div_ceil(1),
     }
 }
 

@@ -96,6 +96,14 @@ var<private> tentative_marcov_chain_state: MarcovChainState;
 // Sc in the paper.
 var<private> current_marcov_chain_state: MarcovChainState;
 
+fn shuffle_marcov_chain(next_subgroup:u32) {
+    tentative_marcov_chain_state.light_source = subgroupShuffle(tentative_marcov_chain_state.light_source, next_subgroup);
+    tentative_marcov_chain_state.mean_cosine = subgroupShuffle(tentative_marcov_chain_state.mean_cosine, next_subgroup);
+    tentative_marcov_chain_state.weight_sum = subgroupShuffle(tentative_marcov_chain_state.weight_sum, next_subgroup);
+    tentative_marcov_chain_state.num_samples = subgroupShuffle(tentative_marcov_chain_state.num_samples, next_subgroup);
+    tentative_marcov_chain_state.score = subgroupShuffle(tentative_marcov_chain_state.score, next_subgroup);
+}
+
 fn marcov_chain_valid(state: MarcovChainState) -> bool {
     return state.weight_sum > 0.0;
 }
@@ -105,12 +113,12 @@ const MARCOV_CHAIN_SAMPLE_CLAMP = 1024;
 const FLOAT_MAX = 3.40282347E+38;
 
 // x0 is never used so we don't include it.
-fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, pdf: f32, p_hat: f32, seed: u32, hemisphere_sample: bool) {
+fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, pdf: f32, p_hat: f32, seed: u32, not_vmf: bool) {
     let score = safe_div(p_hat, pdf);
     let a = min(1.0, div_or(score, current_marcov_chain_state.score, FLOAT_MAX));
     let rand = rand_f32(seed);
     if ((score > 0.0) && (!marcov_chain_valid(current_marcov_chain_state) || rand < a)) { // May want to convert this to be closer to the GI update.
-        if hemisphere_sample {
+        if not_vmf {
             tentative_marcov_chain_state = MarcovChainState();
         }
         tentative_marcov_chain_state.score = score;
@@ -120,7 +128,7 @@ fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, pdf: f
     let alpha = max(div_or(1.0, f32(tentative_marcov_chain_state.num_samples), FLOAT_MAX), 0.1);
     // WGSL mix is the same as the one in the paper.
     let weight_sum = mix(tentative_marcov_chain_state.weight_sum, score, alpha);
-    tentative_marcov_chain_state.light_source = mix(tentative_marcov_chain_state.weight_sum * tentative_marcov_chain_state.light_source, score * x2, alpha);
+    tentative_marcov_chain_state.light_source = mix(tentative_marcov_chain_state.weight_sum * tentative_marcov_chain_state.light_source, score * x2, alpha)/weight_sum;
     let mean = normalize(tentative_marcov_chain_state.light_source - x1);
     // Instead of mean_cosine there was something else in the paper, but there is no such field in
     // MarcovChainState and it isn't accessed anywhere else and r isn't accessed here so assuming it's r.
@@ -129,9 +137,9 @@ fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, pdf: f
     tentative_marcov_chain_state.weight_sum = weight_sum;
 }
 
-@workgroup_size(8, 8, 1)
+@workgroup_size(64, 1, 1)
 @compute
-fn rt_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) work_id: vec3<u32>) {
+fn rt_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) work_id: vec3<u32>, @builtin(subgroup_size) sub_size:u32, @builtin(subgroup_invocation_id) sub_id: u32) {
     let screen_size = textureDimensions(output);
     if (id.x > screen_size.x || id.y > screen_size.y) {
         return;
@@ -152,6 +160,7 @@ fn rt_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) 
     var sample: Sample;
     var sample_valid = false;
     var pdf = 0.0;
+    let next_sub_id = (sub_id + 5) % sub_size;
     for (var i = 0u; i < SAMPLES; i++) {
         let ray_sample = rt_sample(id.xy, own_seed, (i == 0u));
         cam_loc = ray_sample.cam_loc;
@@ -175,6 +184,7 @@ fn rt_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) 
             sample = Sample(ray_sample.visible_point, normalised_to_u32(ray_sample.visible_normal), ray_sample.point, normalised_to_u32(pixel_normal), out_radiance / f32(SAMPLES), pixel_ty, conv_rough(ray_sample.roughness), 1.0);
             pdf += ray_sample.pdf;
         }
+        shuffle_marcov_chain(next_sub_id);
         //lights.samples[idx] = update(sample, 1.0, lights.samples[idx], own_seed);
     }
     pdf /= f32(SAMPLES);
@@ -225,6 +235,11 @@ struct PickedRefIdx {
     picked: bool,
 }
 
+struct RISDirections {
+    dir: vec3<f32>,
+    weight: f32,
+}
+
 fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn {
     var self_seed = own_seed;
     var ray = create_ray(coord);
@@ -243,15 +258,17 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
     var accum_albedo = vec3<f32>(1.0);
     var picked = PickedRefIdx();
     var cached_pdf: f32;
+    var last_not_vmf = false;
     for (var i = 0u; i < BOUNCES; i++) {
         let intersection = ray_hit(&ray);
         if (intersection.hit) {
             let new_pos = at(&ray, intersection.t);
             // We have at least hit the scene twice (this is our second time)
-            if (i > 1u) && (length(intersection.emission) > 0.0) {
-                update_marcov_state(ray.origin, new_pos, cached_pdf, length(intersection.emission), self_seed, false/*todo*/);
+            if (i >= 1u) && (length(intersection.emission) > 0.0) {
+                update_marcov_state(ray.origin, new_pos, cached_pdf, length(intersection.emission), self_seed, last_not_vmf);
                 self_seed++;
             }
+            last_not_vmf = false;
             ray.origin = new_pos;
             accum_emission = fma(intersection.emission, accum_albedo, accum_emission);
             accum_albedo *= intersection.color;
@@ -345,63 +362,67 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                     let rand = rand_f32(self_seed);
                     self_seed = self_seed + 1u;
                     var dir: vec3<f32>;
-                    var cosine_weight = 1.0;
-                    if (!marcov_chain_valid(tentative_marcov_chain_state) || !vec3_near_zero(intersection.emission)) {
-                        cosine_weight = 1.0;
-                    }
                     var i: u32;
                     // Prepare for markov chain
                     let mean = normalize(tentative_marcov_chain_state.light_source - ray.origin);
                     const Np = 0.2;
                     // TODO: use rp mix, that was the best in the paper.
-                    let rp = 0.99;
+                    let rp = 0.1;
                     // Not exactly sure what N is supposed to be in this case, but pretty sure it is this.
                     let N = tentative_marcov_chain_state.num_samples;
                     let N_sqrd = f32(N * N);
                     let r = safe_div(((N_sqrd * tentative_marcov_chain_state.mean_cosine) + (Np * rp)), (N_sqrd + Np));
                     // We don't want this to be zero or infinity
-                    let kappa = max((3.0 * r) - (r*r*r) / max(1 - (r*r), SMALL_VAL), SMALL_VAL);
-                    // Pick pdf to use
-                    if (rand < cosine_weight) {
-                        dir = cosine_weighted_hemisphere(self_seed, intersection.normal, intersection.tangent);
+                    //let kappa = max((3.0 * r) - (r*r*r) / max(1 - (r*r), SMALL_VAL), SMALL_VAL);
+                    let kappa = 1.0;
+                    // Calculate cosine direction
+                    let dir_cosine = cosine_weighted_hemisphere(self_seed, intersection.normal, intersection.tangent);
+                    // Calculate markov chain direction
+                    let theta = rand_f32(self_seed) * TAU;
+                    let V = vec2<f32>(cos(theta), sin(theta));
+                    self_seed = self_seed + 1u;
+                    let xi = rand_f32(self_seed);
+                    self_seed = self_seed + 1u;
+                    let minus_2_kappa = -2.0 * kappa;
+                    var W = 1.0 + (safe_div(1.0, kappa) * log((1.0 - xi) + (xi * exp(minus_2_kappa))));
+                    let norm_V = sqrt(saturate(1.0 - (W*W)));
+                    let Xs = from_onb_no_tangent(vec3(V.x * norm_V, W, V.y * norm_V), mean);
+                    let dir_markov = normalize(Xs);
+                    // Calculate pdf of marcov chain for cosine direction
+                    let cos_theta_markov = dot(dir_cosine, tentative_marcov_chain_state.light_source);
+                    let a = safe_div(minus_2_kappa, exp(minus_2_kappa) - 1.0);
+                    let fraction = a / (4.0 * PI);
+                    let marcov_pdf_of_cosine = max(fraction*exp(kappa * (cos_theta_markov - 1.0)), 0.0);
+                    // Calculate pdf of cosine for cosine direction
+                    let cosine_pdf = max(dot(dir_cosine, intersection.normal) / PI, 0.0);
+                    // Calculate balanced weights for cosine direction
+                    var balance_cosine_weight = cosine_pdf / (marcov_pdf_of_cosine + cosine_pdf);
+                    //balance_cosine_weight = 1.0;
+                    if (!marcov_chain_valid(tentative_marcov_chain_state) || !vec3_near_zero(intersection.emission)) /*|| (dot(dir_markov, intersection.normal) < 0.0)*/ {
+                        balance_cosine_weight = 1.0;
+                    }
+                    // Since all pdfs add to 1, we don't need all of this until unifying other bsdfs
+                    // Calculate pdf of marcov chain for markov direction
+                    let cos_theta_markov_of_markov = dot(dir_markov, tentative_marcov_chain_state.light_source);
+                    let marcov_pdf = max(fraction*exp(kappa * (cos_theta_markov_of_markov - 1.0)), 0.0);
+                    // Calculate pdf of cosine for markov direction
+                    //let cosine_pdf_of_markov = max(dot(dir_markov, intersection.normal) / PI, 0.0);
+                    let balance_markov_weight = 1.0 - balance_cosine_weight;
+                    var final_pdf: f32;
+                    if (rand < balance_cosine_weight) {
+                        dir = dir_cosine;
+                        final_pdf = cosine_pdf / balance_cosine_weight;
+                        last_not_vmf = true;
                         i = 0;
                     } else {
-                        let theta = rand_f32(self_seed) * TAU;
-                        let V = vec2<f32>(cos(theta), sin(theta));
-                        self_seed = self_seed + 1u;
-                        let xi = rand_f32(self_seed);
-                        self_seed = self_seed + 1u;
-                        var W = 1.0 + (safe_div(1.0, kappa) * log(xi + ((1.0 - xi) * exp(-2.0 * kappa))));
-                        let norm_V = sqrt(saturate(1.0 - (W*W)));
-                        let Xs = from_onb_no_tangent(vec3(V.x * norm_V, W, V.y * norm_V), mean);
-                        dir = normalize(Xs);
+                        dir = dir_markov;
+                        final_pdf = marcov_pdf / balance_markov_weight;
                         i = 1;
                         //sample.color = (mean + 1) / 2;
                         //return sample;
                     }
-                    // Calculate pdf of marcov chain
-                    let cos_theta_markov = dot(dir, tentative_marcov_chain_state.light_source);
-                    let minus_2_kappa = -2.0 * kappa;
-                    let a = safe_div(minus_2_kappa, exp(minus_2_kappa) - 1.0);
-                    let fraction = a / (4.0 * PI);
-                    let marcov_pdf = max(fraction*exp(kappa * (cos_theta_markov - 1.0)), 0.0);
-                    let markov_weight = 1.0 - cosine_weight;
-                    // Calculate pdf of cosine
-                    let cosine_pdf = max(dot(dir, intersection.normal) / PI, 0.0);
+
                     // Calculate final pdf
-                    var final_pdf: f32;
-                    if (markov_weight == 0.0) {
-                        // markov pdf should not be included because it might be an INF or NAN due to no real sample being possible
-                        final_pdf = cosine_pdf;
-                    } else {
-                        var picked: f32;
-                        if (i == 0) {
-                            picked = (cosine_pdf * cosine_weight);
-                        } else {
-                            picked = marcov_pdf * markov_weight;
-                        }
-                        final_pdf = ((cosine_pdf * cosine_weight) + (marcov_pdf * markov_weight));
-                    }
                     let diffuse = make_diffuse(intersection.color, ray, intersection.normal, intersection.tangent, intersection.roughness.x, dir);
                     //let dot = max(dot(dir, normal), 0.0) / dot(dir, intersection.normal);
                     //color = color * dot;
@@ -411,7 +432,8 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                         return sample;
                     }*/
                     cached_pdf = final_pdf;
-                    let normalization_factor = safe_div(cosine_pdf, final_pdf);
+                    // Divide the cosine pdf by something that might be the cosine pdf to try to cancel them out
+                    let normalization_factor = safe_div(dot(dir, intersection.normal) / PI, final_pdf);
                     color = color * normalization_factor * diffuse;
                     if (!(i_diffuse == 0u)) {
                         out_radiance_colour = out_radiance_colour * normalization_factor * diffuse;
