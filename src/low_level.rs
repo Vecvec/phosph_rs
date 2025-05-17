@@ -57,6 +57,7 @@ pub unsafe trait RayTracingShader: Sized + 'static {
             | Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
             | Features::TEXTURE_BINDING_ARRAY
             | Features::PARTIALLY_BOUND_BINDING_ARRAY
+            | Features::SUBGROUP
     }
     fn limits() -> Limits {
         // limits required to interact

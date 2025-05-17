@@ -23,7 +23,7 @@ override DO_NOT_OVERRIDE = IS_SPACE * IS_SPACE;
 
 const MIN_DIST = 0.00001;
 
-@workgroup_size(8, 8, 1)
+@workgroup_size(64, 1, 1)
 @compute
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) work_id: vec3<u32>) {
     let screen_size = textureDimensions(output);
