@@ -310,3 +310,33 @@ fn get_label<S: RayTracingShader>() -> Option<&'static str> {
 fn get_label<S: RayTracingShader>() -> Option<&'static str> {
     None
 }
+
+#[cfg(feature = "no-vertex-return")]
+const BINDINGS_MAYBE_VERTEX_RETURN: &'static str = include_str!("bindings_no_vertex_return.wgsl");
+
+#[cfg(not(feature = "no-vertex-return"))]
+const BINDINGS_MAYBE_VERTEX_RETURN: &'static str = include_str!("bindings_vertex_return.wgsl");
+
+const BINDINGS: &'static str = include_str!("bindings.wgsl");
+
+#[macro_export]
+macro_rules! bindings {
+    () => {&$crate::BINDINGS.to_string().add($crate::BINDINGS_MAYBE_VERTEX_RETURN)};
+}
+
+/// matches the verices structure added to bindings.wgsl if feature `no-vertex-return` is enabled
+#[repr(C)]
+#[derive(Debug)]
+pub struct Vertices {
+    pub geometry_stride: u32,
+    pub vertices: Vec<[f32; 4]>,
+}
+
+impl Vertices {
+    pub fn append_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.reserve_exact(size_of_val(self) + size_of::<[f32;3]>());
+        bytes.extend_from_slice(&self.geometry_stride.to_ne_bytes());
+        bytes.extend_from_slice(&[0; size_of::<[f32;3]>()]);
+        bytes.extend_from_slice(bytemuck::cast_slice(&self.vertices));
+    }
+}

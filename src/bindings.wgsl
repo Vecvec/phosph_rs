@@ -25,8 +25,6 @@ struct MaterialsIdx {
 var<storage> materials: array<Material>;
 @group(0) @binding(1)
 var<storage> material_idx: binding_array<MaterialsIdx>;
-@group(0) @binding(2)
-var acc_struct: acceleration_structure<vertex_return>;
 
 @group(1) @binding(0)
 var<uniform> camera: Camera;

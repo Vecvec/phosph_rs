@@ -20,21 +20,7 @@ use std::{iter, mem};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 #[cfg(feature = "denoise")]
 use wgpu::MapMode;
-use wgpu::{
-    include_wgsl, AccelerationStructureFlags, AccelerationStructureGeometryFlags,
-    AccelerationStructureUpdateMode, BindGroupDescriptor, BindGroupEntry,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlasBuildEntry,
-    BlasGeometries, BlasGeometrySizeDescriptors, BlasTriangleGeometry,
-    BlasTriangleGeometrySizeDescriptor, BufferAddress, BufferBindingType, BufferUsages,
-    ColorTargetState, CommandEncoderDescriptor, ComputePassDescriptor, ComputePipelineDescriptor,
-    CreateBlasDescriptor, CreateTlasDescriptor, DeviceDescriptor, Extent3d, Features,
-    FragmentState, IndexFormat, InstanceDescriptor, Limits, Operations, PipelineCompilationOptions,
-    PipelineLayoutDescriptor, PresentMode, PushConstantRange, RenderPassColorAttachment,
-    RenderPassDescriptor, RenderPipelineDescriptor, RequestAdapterOptions, ShaderStages,
-    SurfaceError, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
-    TextureUsages, TextureViewDescriptor, TextureViewDimension, TlasInstance, TlasPackage,
-    VertexFormat, VertexState,
-};
+use wgpu::{include_wgsl, AccelerationStructureFlags, AccelerationStructureGeometryFlags, AccelerationStructureUpdateMode, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlasBuildEntry, BlasGeometries, BlasGeometrySizeDescriptors, BlasTriangleGeometry, BlasTriangleGeometrySizeDescriptor, BufferAddress, BufferBinding, BufferBindingType, BufferUsages, ColorTargetState, CommandEncoderDescriptor, ComputePassDescriptor, ComputePipelineDescriptor, CreateBlasDescriptor, CreateTlasDescriptor, DeviceDescriptor, Extent3d, Features, FragmentState, IndexFormat, InstanceDescriptor, Limits, Operations, PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode, PushConstantRange, RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, RequestAdapterOptions, ShaderStages, SurfaceError, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension, TlasInstance, TlasPackage, VertexFormat, VertexState};
 
 const SHADER: &dyn RayTracingShaderDST = &path_tracing::Medium;
 
@@ -171,36 +157,39 @@ fn main() {
     let light_pos = [0.5 - (LIGHT_SIZE / 2.0), 0.5 + (LIGHT_SIZE / 2.0)];
     const SMALL_BLOCK_OFFSET: f32 = 0.15;
     const LIGHT_HEIGHT: f32 = 0.999999;
-    let vertices = [
-        [0.0f32, 0.0, 0.0],                         //0
-        [1.0, 0.0, 0.0],                            //1
-        [0.0, 0.0, 1.0],                            //2
-        [1.0, 0.0, 1.0],                            //3
-        [0.0, 1.0, 0.0],                            //4
-        [1.0, 1.0, 0.0],                            //5
-        [0.0, 1.0, 1.0],                            //6
-        [1.0, 1.0, 1.0],                            //7
-        [light_pos[0], LIGHT_HEIGHT, light_pos[0]], //8
-        [light_pos[1], LIGHT_HEIGHT, light_pos[0]], //9
-        [light_pos[0], LIGHT_HEIGHT, light_pos[1]], //10
-        [light_pos[1], LIGHT_HEIGHT, light_pos[1]], //11
-        [0.62, 0.0, 0.44],
-        [0.44169, 0.0, 0.61523],
-        [0.61691, 0.0, 0.79354],
-        [0.79523, 0.0, 0.61831],
-        [0.62, 0.66, 0.44],
-        [0.44169, 0.66, 0.61523],
-        [0.61691, 0.66, 0.79354],
-        [0.79523, 0.66, 0.61831],
-        [SMALL_BLOCK_OFFSET, 0.0, SMALL_BLOCK_OFFSET],
-        [SMALL_BLOCK_OFFSET + 0.3, 0.0, SMALL_BLOCK_OFFSET],
-        [SMALL_BLOCK_OFFSET + 0.3, 0.0, SMALL_BLOCK_OFFSET + 0.3],
-        [SMALL_BLOCK_OFFSET, 0.0, SMALL_BLOCK_OFFSET + 0.3],
-        [SMALL_BLOCK_OFFSET, 0.3, SMALL_BLOCK_OFFSET],
-        [SMALL_BLOCK_OFFSET + 0.3, 0.3, SMALL_BLOCK_OFFSET],
-        [SMALL_BLOCK_OFFSET + 0.3, 0.3, SMALL_BLOCK_OFFSET + 0.3],
-        [SMALL_BLOCK_OFFSET, 0.3, SMALL_BLOCK_OFFSET + 0.3],
-    ];
+    let vertices = phosph_rs::Vertices {
+        geometry_stride: 0,
+        vertices: vec![
+            [0.0f32, 0.0, 0.0, 0.0],                         //0
+            [1.0, 0.0, 0.0, 0.0],                            //1
+            [0.0, 0.0, 1.0, 0.0],                            //2
+            [1.0, 0.0, 1.0, 0.0],                            //3
+            [0.0, 1.0, 0.0, 0.0],                            //4
+            [1.0, 1.0, 0.0, 0.0],                            //5
+            [0.0, 1.0, 1.0, 0.0],                            //6
+            [1.0, 1.0, 1.0, 0.0],                            //7
+            [light_pos[0], LIGHT_HEIGHT, light_pos[0], 0.0], //8
+            [light_pos[1], LIGHT_HEIGHT, light_pos[0], 0.0], //9
+            [light_pos[0], LIGHT_HEIGHT, light_pos[1], 0.0], //10
+            [light_pos[1], LIGHT_HEIGHT, light_pos[1], 0.0], //11
+            [0.62, 0.0, 0.44, 0.0],
+            [0.44169, 0.0, 0.61523, 0.0],
+            [0.61691, 0.0, 0.79354, 0.0],
+            [0.79523, 0.0, 0.61831, 0.0],
+            [0.62, 0.66, 0.44, 0.0],
+            [0.44169, 0.66, 0.61523, 0.0],
+            [0.61691, 0.66, 0.79354, 0.0],
+            [0.79523, 0.66, 0.61831, 0.0],
+            [SMALL_BLOCK_OFFSET, 0.0, SMALL_BLOCK_OFFSET, 0.0],
+            [SMALL_BLOCK_OFFSET + 0.3, 0.0, SMALL_BLOCK_OFFSET, 0.0],
+            [SMALL_BLOCK_OFFSET + 0.3, 0.0, SMALL_BLOCK_OFFSET + 0.3, 0.0],
+            [SMALL_BLOCK_OFFSET, 0.0, SMALL_BLOCK_OFFSET + 0.3, 0.0],
+            [SMALL_BLOCK_OFFSET, 0.3, SMALL_BLOCK_OFFSET, 0.0],
+            [SMALL_BLOCK_OFFSET + 0.3, 0.3, SMALL_BLOCK_OFFSET, 0.0],
+            [SMALL_BLOCK_OFFSET + 0.3, 0.3, SMALL_BLOCK_OFFSET + 0.3, 0.0],
+            [SMALL_BLOCK_OFFSET, 0.3, SMALL_BLOCK_OFFSET + 0.3, 0.0],
+        ],
+    };
     #[rustfmt::skip]
     let indices = [
         0u32, 1, 2, 1, 2, 3,
@@ -442,37 +431,42 @@ fn main() {
         cache: None,
         multiview: None,
     });
-
+    let mut vertex_bytes = Vec::new();
+    vertices.append_bytes(&mut vertex_bytes);
     let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: None,
-        contents: bytemuck::cast_slice(&vertices),
-        usage: BufferUsages::BLAS_INPUT,
+        contents: &vertex_bytes,
+        usage: BufferUsages::BLAS_INPUT | BufferUsages::STORAGE,
     });
     let index_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: None,
         contents: bytemuck::cast_slice(&indices),
-        usage: BufferUsages::BLAS_INPUT,
+        usage: BufferUsages::BLAS_INPUT | BufferUsages::STORAGE,
     });
 
     let blas_size = BlasTriangleGeometrySizeDescriptor {
         vertex_format: VertexFormat::Float32x3,
-        vertex_count: vertices.len() as u32,
+        vertex_count: vertices.vertices.len() as u32,
         index_format: Some(IndexFormat::Uint32),
         index_count: Some(indices.len() as u32),
         flags: AccelerationStructureGeometryFlags::OPAQUE,
     };
+    #[cfg(feature = "no-vertex-return")]
+    const VERTEX_RETURN_FLAG: AccelerationStructureFlags = AccelerationStructureFlags::empty();
+    #[cfg(not(feature = "no-vertex-return"))]
+    const VERTEX_RETURN_FLAG: AccelerationStructureFlags = AccelerationStructureFlags::empty();
     let tlas = device.create_tlas(&CreateTlasDescriptor {
         label: None,
         max_instances: 1,
         flags: AccelerationStructureFlags::PREFER_FAST_TRACE
-            | AccelerationStructureFlags::ALLOW_RAY_HIT_VERTEX_RETURN,
+            | VERTEX_RETURN_FLAG,
         update_mode: AccelerationStructureUpdateMode::Build,
     });
     let blas = device.create_blas(
         &CreateBlasDescriptor {
             label: Some("test blas"),
             flags: AccelerationStructureFlags::PREFER_FAST_TRACE
-                | AccelerationStructureFlags::ALLOW_RAY_HIT_VERTEX_RETURN,
+                | VERTEX_RETURN_FLAG,
             update_mode: AccelerationStructureUpdateMode::Build,
         },
         BlasGeometrySizeDescriptors::Triangles {
@@ -539,8 +533,8 @@ fn main() {
             geometry: BlasGeometries::TriangleGeometries(vec![BlasTriangleGeometry {
                 size: &blas_size,
                 vertex_buffer: &vertex_buffer,
-                first_vertex: 0,
-                vertex_stride: mem::size_of::<[f32; 3]>() as BufferAddress,
+                first_vertex: 1,
+                vertex_stride: mem::size_of::<[f32; 4]>() as BufferAddress,
                 index_buffer: Some(&index_buffer),
                 first_index: Some(0),
                 transform_buffer: None,
@@ -558,6 +552,44 @@ fn main() {
         usage: BufferUsages::STORAGE,
     });
 
+    #[cfg(feature = "no-vertex-return")]
+    let material_bg = device.create_bind_group(&BindGroupDescriptor {
+        label: None,
+        layout: &compute_pipeline.get_bind_group_layout(0),
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::Buffer(material_buf.as_entire_buffer_binding()),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::BufferArray(&[
+                    material_indices_buf.as_entire_buffer_binding()
+                ]),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: BindingResource::AccelerationStructure(tlas_package.tlas()),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: BindingResource::BufferArray(&[BufferBinding{
+                    buffer: &vertex_buffer,
+                    offset: 0,
+                    size: None,
+                }]),
+            },
+            BindGroupEntry {
+                binding: 4,
+                resource:  BindingResource::BufferArray(&[BufferBinding{
+                    buffer: &index_buffer,
+                    offset: 0,
+                    size: None,
+                }]),
+            }
+        ],
+    });
+    #[cfg(not(feature = "no-vertex-return"))]
     let material_bg = device.create_bind_group(&BindGroupDescriptor {
         label: None,
         layout: &compute_pipeline.get_bind_group_layout(0),
@@ -692,6 +724,7 @@ fn main() {
                             .create_view(&TextureViewDescriptor::default()),
                         resolve_target: None,
                         ops: Operations::default(),
+                        depth_slice: None,
                     })],
                     depth_stencil_attachment: None,
                     timestamp_writes: None,

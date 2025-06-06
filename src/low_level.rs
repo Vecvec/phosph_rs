@@ -25,7 +25,7 @@ use wgpu::{
 /// }
 /// ````
 ///
-/// It is considered a logic error if the function does not pass validation (but does *not* cause UB)
+/// It is considered a logic error if the function does not pass validation (but should *not* cause UB)
 ///
 /// # Safety:
 ///
@@ -45,18 +45,22 @@ pub unsafe trait IntersectionHandler: 'static {
 pub unsafe trait RayTracingShader: Sized + 'static {
     fn new() -> Self;
     fn features() -> Features {
+        #[cfg(feature = "no-vertex-return")]
+        let maybe_vertex_return = Features::empty();
+        #[cfg(not(feature = "no-vertex-return"))]
+        let maybe_vertex_return = Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN;
         // features required to interact
         Features::EXPERIMENTAL_RAY_TRACING_ACCELERATION_STRUCTURE
             | Features::EXPERIMENTAL_RAY_QUERY
             | Features::STORAGE_RESOURCE_BINDING_ARRAY
             | Features::BUFFER_BINDING_ARRAY
-            | Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN
             | Features::STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING
             | Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
             | Features::PUSH_CONSTANTS
             | Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
             | Features::TEXTURE_BINDING_ARRAY
             | Features::PARTIALLY_BOUND_BINDING_ARRAY
+            | maybe_vertex_return
     }
     fn limits() -> Limits {
         // limits required to interact
@@ -148,38 +152,91 @@ pub fn pipeline_layout(
     attribute_count: NonZeroU32,
     extra_bgls: &[BindGroupLayout],
 ) -> PipelineLayout {
+    #[cfg(not(feature = "no-vertex-return"))]
+    let entries = &[
+        BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: Some(BufferSize::new(44).unwrap()),
+            },
+            count: None,
+        },
+        BindGroupLayoutEntry {
+            binding: 1,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: Some(BufferSize::new(4).unwrap()),
+            },
+            count: Some(blas_count),
+        },
+        BindGroupLayoutEntry {
+            binding: 2,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::AccelerationStructure {
+                vertex_return: true,
+            },
+            count: None,
+        },
+    ];
+    #[cfg(feature = "no-vertex-return")]
+    let entries = &[
+        BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: Some(BufferSize::new(44).unwrap()),
+            },
+            count: None,
+        },
+        BindGroupLayoutEntry {
+            binding: 1,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: Some(BufferSize::new(4).unwrap()),
+            },
+            count: Some(blas_count),
+        },
+        BindGroupLayoutEntry {
+            binding: 2,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::AccelerationStructure {
+                vertex_return: false,
+            },
+            count: None,
+        },
+        BindGroupLayoutEntry {
+            binding: 3,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: Some(blas_count),
+        },
+        BindGroupLayoutEntry {
+            binding: 4,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: Some(blas_count),
+        },
+    ];
     let mat_bgl = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: None,
-        entries: &[
-            BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(BufferSize::new(44).unwrap()),
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 1,
-                visibility: ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(BufferSize::new(4).unwrap()),
-                },
-                count: Some(blas_count),
-            },
-            BindGroupLayoutEntry {
-                binding: 2,
-                visibility: ShaderStages::COMPUTE,
-                ty: BindingType::AccelerationStructure {
-                    vertex_return: true,
-                },
-                count: None,
-            },
-        ],
+        entries,
     });
     let mut bgls = Vec::with_capacity(extra_bgls.len() + 3);
     bgls.push(&mat_bgl);

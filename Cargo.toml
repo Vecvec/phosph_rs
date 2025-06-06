@@ -5,7 +5,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wgpu = { git = "https://github.com/Vecvec/wgpu.git", branch = "fix-overwriting-intersection-functions" }
+wgpu = { git = "https://github.com/Vecvec/wgpu.git", branch = "fix-aliased-ray-queries" }
 #wgpu = { path = "../wgpu/wgpu" }
 futures = "0.3.30"
 bytemuck = { version =  "1.22.0", features = ["derive"] }
@@ -23,4 +23,10 @@ env_logger = "0.11"
 glfw = "0.59.0"
 
 [features]
+# This feature disables the requirement of `EXPERIMENTAL_RAY_HIT_VERTEX_RETURN`.
+# This requires additional user tracking requirements which
+# can cause issues if incorrectly done. It is recommended
+# that this is enabled *after* intergration with an
+# application is complete and the bugs are fixed.
+no-vertex-return = []
 wip-features = []

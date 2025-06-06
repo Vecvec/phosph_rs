@@ -368,7 +368,7 @@ override T_MIN:f32 = 0.0001;
 override T_MAX:f32 = 1000.0;
 
 fn ray_hit(ray: ptr<function, Ray>) -> Intersection {
-    var rq: ray_query<vertex_return>;
+    var rq: ray_query_maybe_vertex_return;
     rayQueryInitialize(&rq, acc_struct, RayDesc(0u, 0xFFu, T_MIN, T_MAX, (*ray).origin, (*ray).direction));
     var aabb_normal: vec3<f32>;
     var aabb_tangent: vec3<f32>;
@@ -411,7 +411,7 @@ fn ray_hit(ray: ptr<function, Ray>) -> Intersection {
         var normal: vec3<f32>;
         var tangent: vec3<f32>;
         if (intersection.kind == RAY_QUERY_INTERSECTION_TRIANGLE) {
-            let vertices = getCommittedHitVertexPositions(&rq);
+            let vertices = GET_COMMITTED_VERTEX_POSITIONS;
             tangent = correct_tangent(normalize(vertices[0] - vertices[1]));
             normal = normalize(cross(tangent, vertices[0] - vertices[2]));
         } else if (intersection.kind == RAY_QUERY_INTERSECTION_GENERATED) {
