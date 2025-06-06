@@ -76,7 +76,7 @@ struct Reservoir {
 }
 
 struct WorkgroupLights {
-    samples: array<Reservoir>
+    samples: array<MarcovChainState>
 }
 
 const CONFIDENCE_CAP = 1u;
