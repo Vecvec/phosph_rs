@@ -1,5 +1,13 @@
 override SAMPLES = 5u;
 
+struct MarcovChainState {
+    light_source: vec3<f32>,
+    mean_cosine: f32,
+    weight_sum: f32,
+    num_samples: u32,
+    score: f32,
+}
+
 struct Camera {
     // this way we can have any fov easily.
     projection_inverse: mat4x4<f32>,

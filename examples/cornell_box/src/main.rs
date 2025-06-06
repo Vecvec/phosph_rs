@@ -24,15 +24,15 @@ use wgpu::{include_wgsl, AccelerationStructureFlags, AccelerationStructureGeomet
 
 const SHADER: &dyn RayTracingShaderDST = &path_tracing::Medium;
 
-const SIZE: u32 = 640;
+const SIZE: u32 = 320;
 
-const SAMPLES: usize = 32;
+const SAMPLES: usize = 16;
 
 const IS_SAMPLES: usize = 32;
 
 const IS_SPACE: usize = 31;
 
-const LIGHT_SIZE: f32 = 0.5;
+const LIGHT_SIZE: f32 = 0.1;
 /// Total light produced, correlated to lumens.
 const LIGHT_BRIGHTNESS: f32 = 1.0;
 /// The brightness of the light at a point.
@@ -712,7 +712,7 @@ fn main() {
                 comp_pass.dispatch_workgroups(size.width, size.height, 1);
             }
             // we use the non-temporal advance because (when importance sampling gets added) averaging reused data is not a good idea
-            buffers.advance_frame_no_temporal(&mut encoder);
+            //buffers.advance_frame_no_temporal(&mut encoder);
             queue.submit(Some(encoder.finish()));
             #[cfg(feature = "denoise")]
             oidn_state.denoise(&device, &queue);
