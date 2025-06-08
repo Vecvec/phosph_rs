@@ -178,20 +178,29 @@ const FLOAT_MAX = 3.40282347E+38;
 //}
 
 fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, pdf: f32, p_hat: f32, seed: u32, not_vmf: bool) {
-    let score = safe_div(p_hat, pdf);
+    if not_vmf {
+        tentative_marcov_chain_state = MarcovChainState();
+    }
+    let score = p_hat / pdf;
     let rand = rand_f32(seed);
-    if near_zero(sum_mc) {
+    /*if near_zero(sum_mc) {
         tentative_marcov_chain_state.num_samples = min(tentative_marcov_chain_state.num_samples + 1, MARCOV_CHAIN_SAMPLE_CLAMP);
         let alpha = max(1.0 / f32(tentative_marcov_chain_state.num_samples), 0.1);
         tentative_marcov_chain_state.weight_sum = score;
         tentative_marcov_chain_state.light_source = score * x2;
         tentative_marcov_chain_state.mean_cosine = score;
-    } else if (rand < (score * f32(NUM_RESAMPLES)) / (sum_mc)) {
+    } else */if (rand * sum_mc < (p_hat * f32(NUM_RESAMPLES))) {
         tentative_marcov_chain_state.num_samples = min(tentative_marcov_chain_state.num_samples + 1, MARCOV_CHAIN_SAMPLE_CLAMP);
         let alpha = max(1.0 / f32(tentative_marcov_chain_state.num_samples), 0.1);
-        let mean = normalize((tentative_marcov_chain_state.light_source / tentative_marcov_chain_state.weight_sum) - x1);
+        //let ray_target = safe_div_vec3(tentative_marcov_chain_state.light_source, tentative_marcov_chain_state.weight_sum);
+        let ray_target = tentative_marcov_chain_state.light_source;
+        if near_zero(length(ray_target - x1)) {
+            return;
+        }
+        let mean = normalize(ray_target - x1);
         tentative_marcov_chain_state.weight_sum = mix(tentative_marcov_chain_state.weight_sum, score, alpha);
         tentative_marcov_chain_state.light_source = mix(tentative_marcov_chain_state.light_source, score * x2, alpha);
+        //tentative_marcov_chain_state.light_source = mix(tentative_marcov_chain_state.light_source, x2, alpha);
         tentative_marcov_chain_state.mean_cosine = mix(tentative_marcov_chain_state.mean_cosine, score * dot(normalize(x2 - x1), mean), alpha);
     }
 }
@@ -406,6 +415,8 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                 self_seed = self_seed + 1u;
             }
 
+            var s = resample_mcmm(&self_seed);
+
             //sample.color = (normal);
             //return sample;
             //sample.color = color;
@@ -423,10 +434,10 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                         ray.direction = direction;
                     }*/
                     var dir: vec3<f32>;
-                    let s = resample_mcmm(&self_seed);
                     // Prepare for markov chain
-                    //tentative_marcov_chain_state.light_source = vec3<f32>(0.0, 1.0, 0.0);
-                    let mean = normalize((s.light_source / tentative_marcov_chain_state.weight_sum) - ray.origin);
+                    //s.light_source = vec3<f32>(0.0, 1.0, 0.0);
+                    let mean = normalize((s.light_source / s.weight_sum) - ray.origin);
+                    //let mean = normalize((s.light_source) - ray.origin);
                     let kappa = get_kappa(s);
                     // Calculate cosine direction
                     let dir_cosine = cosine_weighted_hemisphere(self_seed, intersection.normal, intersection.tangent);
@@ -445,7 +456,8 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                     let dir_markov = normalize(Xs);
                     // Calculate pdf of cosine for cosine direction
                     var unnormalied_confidences = array<f32, 2>(0.2, 0.8);
-                    if (!marcov_chain_valid(s) || near_zero(length((s.light_source / tentative_marcov_chain_state.weight_sum) - ray.origin))) {
+                    //var unnormalied_confidences = array<f32, 2>(0.8 , 0.2);
+                    if (!marcov_chain_valid(s) || near_zero(length((s.light_source / s.weight_sum) - ray.origin)) || near_zero(s.weight_sum)) {
                         unnormalied_confidences[0] = 1.0;
                         unnormalied_confidences[1] = 0.0;
                     }
@@ -468,7 +480,7 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                         //return sample;
                     }
                     let cosine_pdf = max(dot(dir, intersection.normal) / PI, 0.0);
-                    let avg_pdf = ((confidences[0] * cosine_pdf) + (confidences[1] * all_vmf_pdfs(ray.origin, dir)));
+                    let avg_pdf = ((confidences[0] * cosine_pdf) + select(confidences[1] * all_vmf_pdfs(ray.origin, dir), 0.0, confidences[1] == 0.0));
                     final_pdf = avg_pdf;
                     norm_divisor = avg_pdf;
                     //vmf_weight *= avg_pdf;
@@ -576,11 +588,11 @@ fn get_kappa(state: MarcovChainState) -> f32 {
     // Not exactly sure what N is supposed to be in this case, but pretty sure it is this.
     let N = state.num_samples;
     let N_sqrd = f32(N * N);
-    let r = safe_div(((N_sqrd * state.mean_cosine) + (Np * rp)), (N_sqrd + Np));
+    let r = safe_div(((N_sqrd * (state.mean_cosine / state.weight_sum)) + (Np * rp)), (N_sqrd + Np));
     // We don't want this to be zero or infinity
     // These values are large due to the large amount of floating point inacuracies there are
     return max((3.0 * r) - (r*r*r) / max(1 - (r*r), 0.0001), 0.1);
-    //return 10000.0;
+    //return 1000.0;
 }
 
 fn vmf_pdf(mean:vec3<f32>, kappa:f32, direction:vec3<f32>) -> f32 {

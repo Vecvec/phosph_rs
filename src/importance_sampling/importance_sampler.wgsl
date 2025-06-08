@@ -9,14 +9,6 @@ fn jacobian_determinant(q:Sample, r:Sample) -> f32 {
 
 const F32_MAX = 3.40282347e+38;
 
-fn safe_div_vec3(numerator: vec3<f32>, denominator: f32) -> vec3<f32> {
-    if (near_zero(denominator))  {
-        return vec3<f32>(0.0);
-    } else {
-        return numerator / denominator;
-    }
-}
-
 override IS_SAMPLES = 8u;
 override IS_SPACE = 61u;
 override DO_NOT_OVERRIDE = IS_SPACE * IS_SPACE;

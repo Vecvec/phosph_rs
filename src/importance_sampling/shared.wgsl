@@ -289,3 +289,11 @@ fn div_or(numerator: f32, denominator: f32, or: f32) -> f32 {
         return numerator / denominator;
     }
 }
+
+fn safe_div_vec3(numerator: vec3<f32>, denominator: f32) -> vec3<f32> {
+    if (near_zero(denominator))  {
+        return vec3<f32>(0.0);
+    } else {
+        return numerator / denominator;
+    }
+}

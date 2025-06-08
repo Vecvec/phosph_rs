@@ -26,7 +26,7 @@ const SHADER: &dyn RayTracingShaderDST = &path_tracing::Medium;
 
 const SIZE: u32 = 320;
 
-const SAMPLES: usize = 16;
+const SAMPLES: usize = 4;
 
 const IS_SAMPLES: usize = 32;
 
@@ -39,6 +39,7 @@ const LIGHT_BRIGHTNESS: f32 = 1.0;
 const POINT_BRIGHTNESS:f32 = LIGHT_BRIGHTNESS / (LIGHT_SIZE * LIGHT_SIZE);
 
 fn main() {
+    env_logger::init();
     let mut samples = SAMPLES;
     let args = std::env::args();
 
