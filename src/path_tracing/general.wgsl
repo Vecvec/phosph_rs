@@ -195,11 +195,12 @@ fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, pdf: f
         }
         tentative_marcov_chain_state.num_samples = min(tentative_marcov_chain_state.num_samples + 1, MARCOV_CHAIN_SAMPLE_CLAMP);
         let alpha = max(1.0 / f32(tentative_marcov_chain_state.num_samples), 0.1);
-        let mean = normalize(get_light_dir(tentative_marcov_chain_state, x1));
         tentative_marcov_chain_state.weight_sum = mix(tentative_marcov_chain_state.weight_sum, score, alpha);
         tentative_marcov_chain_state.light_source = mix(tentative_marcov_chain_state.light_source, score * x2, alpha);
+        let mean = normalize(get_light_dir(tentative_marcov_chain_state, x1));
         //tentative_marcov_chain_state.light_source = mix(tentative_marcov_chain_state.light_source, x2, alpha);
         tentative_marcov_chain_state.mean_cosine = mix(tentative_marcov_chain_state.mean_cosine, score * dot(normalize(x2 - x1), mean), alpha);
+        //tentative_marcov_chain_state.mean_cosine = tentative_marcov_chain_state.weight_sum * 0.9;
     }
 }
 
@@ -587,15 +588,18 @@ fn all_vmf_pdfs(hit:vec3<f32>, direction:vec3<f32>) -> f32 {
 fn get_kappa(state: MarcovChainState) -> f32 {
     const Np = 0.2;
     // TODO: use rp mix, that was the best in the paper.
-    let rp = 0.9;
+    let rp = 0.99;
     // Not exactly sure what N is supposed to be in this case, but pretty sure it is this.
     let N = state.num_samples;
     let N_sqrd = f32(N * N);
-    let r = safe_div(((N_sqrd * (state.mean_cosine / state.weight_sum)) + (Np * rp)), (N_sqrd + Np));
+    //let r = safe_div(((N_sqrd * (0.99)) + (Np * rp)), (N_sqrd + Np));
+    let r = (((N_sqrd * (state.mean_cosine / state.weight_sum)) + (Np * rp)) / (N_sqrd + Np));
+    //let r = rp;
     // We don't want this to be zero or infinity
     // These values are large due to the large amount of floating point inacuracies there are
     //return max((3.0 * r) - (r*r*r) / max(1 - (r*r), 0.0001), 0.1);
-    return 1000.0;
+    return ((3.0 * r) - (r*r*r)) / (1.0 - (r*r));
+    //return 1000.0;
 }
 
 fn vmf_pdf(mean:vec3<f32>, kappa:f32, direction:vec3<f32>) -> f32 {
