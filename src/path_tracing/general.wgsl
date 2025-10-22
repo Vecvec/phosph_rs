@@ -500,7 +500,8 @@ fn rt_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) 
         let w = p_hat(sample); // Don't think `/ pdf` should be here, in the paper it's here but it's probably part of the out radiance.
         R = update(sample, w, R, own_seed, false);
         own_seed = rand_u32(own_seed);
-        R.W = safe_div(R.w, (f32(unpack4xU8(R.confidence8_valid8).x) * p_hat(sam_from_res(R))));
+        let confidance = unpack_confidance(R.packed_confidance_valid).confidance;
+        R.W = safe_div(R.w, (f32(confidance) * p_hat(sam_from_res(R))));
         gi_reservoirs[idx] = R;
     }
     info[idx] = from_info(Info(cam_loc, pixel_emission, pixel_albedo));

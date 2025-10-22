@@ -118,6 +118,6 @@ struct Reservoir {
     roughness: f32,             // 48 4 4
     pdf:f32,                    // 52 4 4
     w: f32,                     // 56 4 4
-    confidence8_valid8: u32,    // 60 4 4
+    packed_confidance_valid: u32,    // 60 4 4
     W: f32,                     // 64 4 4
 }

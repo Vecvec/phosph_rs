@@ -65,12 +65,33 @@ struct WorkgroupLights {
     samples: array<MarcovChainState>
 }
 
-const CONFIDENCE_CAP = 4294967295u;
+const MAX_CONFIDANCE = 0x7FFFFFFFu;
+
+struct ConfidanceValid {
+    confidance: u32,
+    valid: u32,
+}
+
+fn unpack_confidance(packed_confidance_valid: u32) -> ConfidanceValid {
+    let confidance = packed_confidance_valid & MAX_CONFIDANCE;
+    let valid = (packed_confidance_valid & (~MAX_CONFIDANCE)) >> 31;
+    return ConfidanceValid(confidance, valid);
+}
+
+fn pack_confidance(confidance_valid: ConfidanceValid) -> u32 {
+    var packed_confidance_valid = confidance_valid.confidance & MAX_CONFIDANCE;
+    packed_confidance_valid |= confidance_valid.valid << 31;
+    return packed_confidance_valid;
+}
+
+const CONFIDENCE_CAP = MAX_CONFIDANCE;
 
 fn update(s_new:Sample, w_new:f32, reservoir: Reservoir, seed:u32, always_update:bool) -> Reservoir {
     var new_reservoir = reservoir;
     new_reservoir.w = new_reservoir.w + w_new;
-    new_reservoir.confidence8_valid8 = pack4xU8(min(vec4<u32>(min(unpack4xU8(new_reservoir.confidence8_valid8).x + 1u, CONFIDENCE_CAP), unpack4xU8(new_reservoir.confidence8_valid8).yzw), vec4u(255u)));
+    var confidance_valid = unpack_confidance(new_reservoir.packed_confidance_valid);
+    confidance_valid.confidance++;
+    new_reservoir.packed_confidance_valid = pack_confidance(confidance_valid);
     if (rand_f32(seed) * new_reservoir.w < w_new) {
         assign_sam_to_res(&new_reservoir, s_new);
     }
@@ -85,8 +106,11 @@ struct MergeReturn {
 fn merge(reservoir: Reservoir, r: Reservoir, p: f32, seed:u32) -> MergeReturn {
     var picked_r = false;
     var new_reservoir = reservoir;
-    let w_new = p * r.W * f32(unpack4xU8(r.confidence8_valid8).x);
-    new_reservoir.confidence8_valid8 = pack4xU8(min(vec4<u32>(min(unpack4xU8(new_reservoir.confidence8_valid8).x + unpack4xU8(r.confidence8_valid8).x, CONFIDENCE_CAP), unpack4xU8(new_reservoir.confidence8_valid8).yzw), vec4u(255u)));
+    var confidance_valid = unpack_confidance(new_reservoir.packed_confidance_valid);
+    let other_confidance_valid = unpack_confidance(r.packed_confidance_valid);
+    let w_new = p * r.W * f32(other_confidance_valid.confidance);
+    confidance_valid.confidance += other_confidance_valid.confidance;
+    new_reservoir.packed_confidance_valid = pack_confidance(confidance_valid);
     new_reservoir.w = new_reservoir.w + w_new;
     // This is exquivelent to what is done in the paper but avoids `INF`s and `NAN`s which are undefined in WGSL.
     if (rand_f32(seed) * new_reservoir.w < w_new) {
@@ -106,7 +130,9 @@ fn assign_sam_to_res(reservoir: ptr<function, Reservoir>, s_new: Sample) {
     reservoir.ty = s_new.ty;
     reservoir.roughness = s_new.roughness;
     reservoir.pdf = s_new.pdf;
-    reservoir.confidence8_valid8 = pack4xU8(vec4<u32>(unpack4xU8((*reservoir).confidence8_valid8).x, 1u, unpack4xU8((*reservoir).confidence8_valid8).zw));
+    var confidance_valid = unpack_confidance((*reservoir).packed_confidance_valid);
+    confidance_valid.valid = 1u;
+    reservoir.packed_confidance_valid = pack_confidance(confidance_valid);
 }
 
 fn sam_from_res(r: Reservoir) -> Sample {
