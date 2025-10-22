@@ -8,6 +8,30 @@ struct MarcovChainState {
     score: f32,
 }
 
+struct AtomicMarcovChainState {
+    light_source: array<atomic<u32>, 3>,
+    mean_cosine: atomic<u32>,
+    weight_sum: atomic<u32>,
+    num_samples: atomic<u32>,
+    score: atomic<u32>,
+}
+
+const MAX_NUM_SAMPLES: u32 = 0xFFFFFFF;
+//const MAX_NUM_SAMPLES: u32 = 2;
+
+const STATE_LOCKED: u32 = 1;
+const STATE_UNLOCKED: u32 = 0;
+
+const INVALID_KEY: u32 = 0;
+
+struct WorldMarcovChainState {
+    secondary_hash: atomic<u32>,
+    num_samples: atomic<u32>,
+    luminance: array<atomic<u32>, 3>,
+    lock: atomic<u32>,
+    chain: AtomicMarcovChainState,
+}
+
 struct Camera {
     // this way we can have any fov easily.
     projection_inverse: mat4x4<f32>,
@@ -45,11 +69,19 @@ var output_albedo: texture_storage_2d<rgba32float, write>;
 @group(1) @binding(4)
 var bg: texture_cube<f32>;
 @group(1) @binding(5)
-var<storage, read_write> lights: WorkgroupLights;
+var<storage, read_write> gi_reservoirs: array<Reservoir>;
 @group(1) @binding(6)
-var<storage> old_lights: WorkgroupLights;
+var<storage> old_gi_reservoirs: array<Reservoir>;
 @group(1) @binding(7)
 var<storage, read_write> info: array<CompressedInfo>;
+@group(1) @binding(8)
+var<storage, read_write> markov_chains: array<MarcovChainState>;
+@group(1) @binding(9)
+var<storage> old_markov_chains: array<MarcovChainState>;
+@group(1) @binding(10)
+var<storage, read_write> world_markov_chains: array<WorldMarcovChainState>;
+@group(1) @binding(11)
+var<storage> old_world_markov_chains: array<WorldMarcovChainState>;
 
 @group(2) @binding(0)
 var sam:sampler;
@@ -74,4 +106,18 @@ fn unpack_2xu16(u:u32) -> vec2<u32> {
     let u1 = u & 0xFFFFu;
     let u2 = (u & 0xFFFF0000u) >> 16u;
     return vec2<u32>(u1, u2);
+}
+
+struct Reservoir {
+    visible_point: vec3<f32>,   // 0 16 12
+    visible_normal: u32,        // 12 4 4
+    sample_point: vec3<f32>,    // 16 16 12
+    sample_normal: u32,         // 28 4 4
+    out_radiance: vec3<f32>,    // 32 16 12
+    ty: u32,                    // 44 4 4
+    roughness: f32,             // 48 4 4
+    pdf:f32,                    // 52 4 4
+    w: f32,                     // 56 4 4
+    confidence8_valid8: u32,    // 60 4 4
+    W: f32,                     // 64 4 4
 }

@@ -65,6 +65,196 @@ fn get_rand(seed:u32) -> vec4<f32> {
     }
 }*/
 
+const F32_EXP_FIELD:u32 = 0x7F800000;
+const F32_SIGN_FEILD:u32 = 0x80000000;
+
+fn strip_NaN(float: f32) -> f32 {
+    let is_nan_or_inf = (bitcast<u32>(float) & F32_EXP_FIELD) == F32_EXP_FIELD;
+    if is_nan_or_inf {
+        let mantissa = bitcast<u32>(float) & ~(F32_EXP_FIELD | F32_SIGN_FEILD);
+        if mantissa == 0 {
+            return 10000.0;
+        }
+        return 0.0;
+    } else {
+        return float;
+    }
+}
+
+fn strip_NaN_vec3(float: vec3<f32>) -> vec3<f32> {
+    return vec3(strip_NaN(float.x), strip_NaN(float.y), strip_NaN(float.z));
+}
+
+const TOP_VEC2_u16_1_BITS = 0x80008000u;
+const TOP_VEC2_u16_2_BITS = 0xC000C000u;
+const TOP_VEC2_u16_4_BITS = 0xF000F000u;
+const TOP_VEC2_u16_8_BITS = 0xFF00FF00u;
+
+const QUANTIZE_BLOCK_SIZE = 2.0;
+fn quantize_packed2x16snorm(initial: u32) -> u32 {
+    return pack2x16snorm(clamp(round(unpack2x16snorm(initial) / QUANTIZE_BLOCK_SIZE) * QUANTIZE_BLOCK_SIZE, vec2(-1.0), vec2(1.0)));
+}
+
+const X_GREATEST = 0u;
+const Y_GREATEST = 1u;
+const Z_GREATEST = 2u;
+
+fn pick_greatest_dir(vector: vec3<f32>) -> u32 {
+    let vec_abs = abs(vector);
+    let max = max(vec_abs.x, max(vec_abs.y, vec_abs.z));
+    var greatest: u32;
+    if max == vec_abs.x {
+        greatest = X_GREATEST;
+    } else if max == vec_abs.y {
+        greatest = Y_GREATEST;
+    } else {
+        greatest = Z_GREATEST;
+    }
+
+    if vector[greatest] < 0.0 {
+        greatest |= 4u;
+    }
+    return greatest;
+}
+
+// Seems like the paper counts 1 as a prime.
+const PRIMES = vec4<u32>(1, 687603047, 571899763, 894271171);
+
+fn primary_hasher(loc: vec3<i32>, normal: vec3<f32>, incoming: vec3<f32>) -> u32 {
+    let normal_u32 = normalised_to_u32(normal) & TOP_VEC2_u16_8_BITS;
+    let incoming_u32 = rand_u32(pick_greatest_dir(incoming));
+    let to_hash = vec4<u32>(bitcast<vec3<u32>>(loc), (normal_u32));
+    let hash = PRIMES * to_hash;
+    return (((hash.x ^ hash.y) ^ hash.z) ^ hash.w) ^ (incoming_u32 * 840057787);
+}
+
+const SECONDARY_PRIMES = vec4<u32>(1699644091, 550105817, 956114303, 155096983);
+
+fn secondary_hasher(loc: vec3<i32>, normal: vec3<f32>, incoming: vec3<f32>) -> u32 {
+    let normal_u32 = normalised_to_u32(normal) & TOP_VEC2_u16_8_BITS;
+    let incoming_u32 = 0u;//normalised_to_u32(quantize_vec3(incoming));
+    let to_hash = vec4<u32>(bitcast<vec3<u32>>(loc), (normal_u32));
+    let hash = SECONDARY_PRIMES * to_hash;
+    // zero is invalid, imples not set.
+    return ((rand_u32((hash.x ^ hash.y) ^ hash.z) ^ hash.w) ^ (incoming_u32 * 284005801)) | 1;
+}
+
+const GRID_SIZE: f32 = 0.1;
+
+fn grid_load(pos: vec3<f32>, normal: vec3<f32>, incoming: vec3<f32>, force_old: bool) -> MarcovChainState {
+    let grid_pos = vec3<i32>(pos / GRID_SIZE);
+    let hash = primary_hasher(grid_pos, normal, incoming);
+    let idx = hash % arrayLength(&world_markov_chains);
+    var s: MarcovChainState;
+    s.light_source.x = bitcast<f32>(atomicLoad(&world_markov_chains[idx].chain.light_source[0]));
+    s.light_source.y = bitcast<f32>(atomicLoad(&world_markov_chains[idx].chain.light_source[1]));
+    s.light_source.z = bitcast<f32>(atomicLoad(&world_markov_chains[idx].chain.light_source[2]));
+    s.mean_cosine = bitcast<f32>(atomicLoad(&world_markov_chains[idx].chain.mean_cosine));
+    s.weight_sum = bitcast<f32>(atomicLoad(&world_markov_chains[idx].chain.weight_sum));
+    s.num_samples = atomicLoad(&world_markov_chains[idx].chain.num_samples);
+    s.score = bitcast<f32>(atomicLoad(&world_markov_chains[idx].chain.score));
+    if (atomicLoad(&world_markov_chains[idx].secondary_hash) != secondary_hasher(grid_pos, normal, incoming) || force_old) {
+        if (atomicLoad(&old_world_markov_chains[idx].secondary_hash) == secondary_hasher(grid_pos, normal, incoming)) {
+            s.light_source.x = bitcast<f32>(atomicLoad(&old_world_markov_chains[idx].chain.light_source[0]));
+            s.light_source.y = bitcast<f32>(atomicLoad(&old_world_markov_chains[idx].chain.light_source[1]));
+            s.light_source.z = bitcast<f32>(atomicLoad(&old_world_markov_chains[idx].chain.light_source[2]));
+            s.mean_cosine = bitcast<f32>(atomicLoad(&old_world_markov_chains[idx].chain.mean_cosine));
+            s.weight_sum = bitcast<f32>(atomicLoad(&old_world_markov_chains[idx].chain.weight_sum));
+            s.num_samples = atomicLoad(&old_world_markov_chains[idx].chain.num_samples);
+            s.score = bitcast<f32>(atomicLoad(&old_world_markov_chains[idx].chain.score));
+        } else {
+            s = MarcovChainState();
+        }
+    }
+    s.light_source.x = strip_NaN(s.light_source.x);
+    s.light_source.y = strip_NaN(s.light_source.y);
+    s.light_source.z = strip_NaN(s.light_source.z);
+    s.mean_cosine = strip_NaN(s.mean_cosine);
+    s.weight_sum = strip_NaN(s.weight_sum);
+    s.score = strip_NaN(s.score);
+    return s;
+}
+
+fn grid_store_markov_chain(pos: vec3<f32>, normal: vec3<f32>, incoming: vec3<f32>, state: MarcovChainState) {
+    let grid_pos = vec3<i32>(pos / GRID_SIZE);
+    let hash = primary_hasher(grid_pos, normal, incoming);
+    let idx = hash % arrayLength(&world_markov_chains);
+    let secondary_hash = secondary_hasher(grid_pos, normal, incoming);
+    if (atomicLoad(&world_markov_chains[idx].secondary_hash) != secondary_hash) {
+        if !(atomicCompareExchangeWeak(&world_markov_chains[idx].secondary_hash, INVALID_KEY, secondary_hash).exchanged) {
+            return;
+        }
+    }
+    atomicStore(&world_markov_chains[idx].chain.light_source[0], bitcast<u32>(state.light_source.x));
+    atomicStore(&world_markov_chains[idx].chain.light_source[1], bitcast<u32>(state.light_source.y));
+    atomicStore(&world_markov_chains[idx].chain.light_source[2], bitcast<u32>(state.light_source.z));
+    atomicStore(&world_markov_chains[idx].chain.mean_cosine, bitcast<u32>(state.mean_cosine));
+    atomicStore(&world_markov_chains[idx].chain.weight_sum, bitcast<u32>(state.weight_sum));
+    atomicStore(&world_markov_chains[idx].chain.num_samples, state.num_samples);
+    atomicStore(&world_markov_chains[idx].chain.score, bitcast<u32>(state.score));
+}
+
+fn grid_load_radiance_estimate(pos: vec3<f32>, normal: vec3<f32>, incoming: vec3<f32>) -> vec3<f32> {
+    let grid_pos = vec3<i32>(pos / GRID_SIZE);
+    let hash = primary_hasher(grid_pos, normal, incoming);
+    let idx = hash % arrayLength(&world_markov_chains);
+    var num_samples = atomicLoad(&world_markov_chains[idx].num_samples);
+    var float_radiance = vec3<f32>(bitcast<f32>(atomicLoad(&world_markov_chains[idx].luminance[0])), bitcast<f32>(atomicLoad(&world_markov_chains[idx].luminance[1])), bitcast<f32>(atomicLoad(&world_markov_chains[idx].luminance[2])));
+    let secondary_hash = atomicLoad(&world_markov_chains[idx].secondary_hash);
+    if (secondary_hash != secondary_hasher(grid_pos, normal, incoming)) {
+        if (atomicLoad(&old_world_markov_chains[idx].secondary_hash) == secondary_hasher(grid_pos, normal, incoming)) {
+            num_samples = atomicLoad(&old_world_markov_chains[idx].num_samples);
+            float_radiance = vec3<f32>(bitcast<f32>(atomicLoad(&old_world_markov_chains[idx].luminance[0])), bitcast<f32>(atomicLoad(&old_world_markov_chains[idx].luminance[1])), bitcast<f32>(atomicLoad(&old_world_markov_chains[idx].luminance[2])));
+        } else {
+            return vec3(0.0);
+        }
+    }
+    if (num_samples == 0) {
+        return vec3(0.0);
+    }
+    let radiance = float_radiance / f32(num_samples);
+    let clamped_radiance = clamp(radiance, vec3(0.0), vec3(1000.0));
+    return clamped_radiance;
+}
+
+fn grid_add_radiance(pos:vec3<f32>, normal:vec3<f32>, incoming: vec3<f32>, radiance: vec3<f32>) {
+    let grid_pos = vec3<i32>(pos / GRID_SIZE);
+    let hash = primary_hasher(grid_pos, normal, incoming);
+    let idx = hash % arrayLength(&world_markov_chains);
+    let secondary_hash = secondary_hasher(grid_pos, normal, incoming);
+    let clamped_radiance = clamp(radiance, vec3(0.0), vec3(100.0));
+    if (atomicLoad(&world_markov_chains[idx].secondary_hash) != secondary_hash) {
+        if !(atomicCompareExchangeWeak(&world_markov_chains[idx].secondary_hash, INVALID_KEY, secondary_hash).exchanged) {
+            return;
+        }
+    }
+    let locked = atomicExchange(&world_markov_chains[idx].lock, STATE_LOCKED);
+    // We must make forward progress even if this is locked, so we just return.
+    if locked == STATE_LOCKED {
+        return;
+    }
+    /*if (atomicLoad(&world_markov_chains[idx].secondary_hash) == INVALID_KEY) {
+        atomicStore(&world_markov_chains[idx].secondary_hash, secondary_hash);
+    }
+    if (atomicLoad(&world_markov_chains[idx].secondary_hash) != secondary_hash) {
+        atomicStore(&world_markov_chains[idx].lock, STATE_UNLOCKED);
+        return;
+    }*/
+    let num_samples = atomicLoad(&world_markov_chains[idx].num_samples);
+    if (num_samples >= MAX_NUM_SAMPLES) {
+        atomicStore(&world_markov_chains[idx].lock, STATE_UNLOCKED);
+        return;
+    }
+    atomicAdd(&world_markov_chains[idx].num_samples, 1);
+    let radiance_red = strip_NaN(clamped_radiance.x + bitcast<f32>(atomicLoad(&world_markov_chains[idx].luminance[0])));
+    atomicStore(&world_markov_chains[idx].luminance[0], bitcast<u32>(max(radiance_red, 0.0)));
+    let radiance_green = strip_NaN(clamped_radiance.y + bitcast<f32>(atomicLoad(&world_markov_chains[idx].luminance[1])));
+    atomicStore(&world_markov_chains[idx].luminance[1], bitcast<u32>(max(radiance_green, 0.0)));
+    let radiance_blue = strip_NaN(clamped_radiance.z + bitcast<f32>(atomicLoad(&world_markov_chains[idx].luminance[2])));
+    atomicStore(&world_markov_chains[idx].luminance[2], bitcast<u32>(max(radiance_blue, 0.0)));
+    atomicStore(&world_markov_chains[idx].lock, STATE_UNLOCKED);
+}
+
 fn brightness(max:f32, odds: f32) -> f32 {
     return odds;
     //return odds * 32.0;
@@ -93,7 +283,12 @@ struct MarcovChainHolder {
     sum_weight_sum: f32,
 }
 
-const NUM_RESAMPLES = 64;
+const NUM_RESAMPLES_SCREEN_SPACE = 4;
+const NUM_RESAMPLES_SCREEN_SPACE_LAST_FRAME = 12;
+const NUM_RESAMPLES_WORLD_SPACE = 4;
+const NUM_NON_PIXEL_RESAMPLES = NUM_RESAMPLES_SCREEN_SPACE + NUM_RESAMPLES_WORLD_SPACE + NUM_RESAMPLES_SCREEN_SPACE_LAST_FRAME;
+const NUM_RESAMPLES = NUM_NON_PIXEL_RESAMPLES + 1;
+//const NUM_NON_PIXEL_RESAMPLES = 0;
 var<private> other_pixels_marcov_chain_states: MarcovChainHolder;
 
 fn shuffle_marcov_chain(next_subgroup:u32) {
@@ -110,19 +305,46 @@ fn get_tentative_marcov_chain(subgroup_id:u32) -> MarcovChainState {
     );
 }
 
-fn fill_mc_states(own_seed: ptr<function, u32>, sub_size: u32) {
-    for (var i = 0; i < NUM_RESAMPLES; i++) {
+const RESAMPLE_SIZE: u32 = 91;
+
+const RESAMPLE_SIZE_SHIFT: i32 = i32(RESAMPLE_SIZE) / 2;
+
+fn fill_mc_screen_space_states(own_seed: ptr<function, u32>, sub_size: u32, pix_pos: vec2<u32>, size: vec2<u32>) {
+    var i = 0;
+    for (; i < NUM_RESAMPLES_SCREEN_SPACE; i++) {
         let sub_id = rand_u32(*own_seed) % sub_size;
-        let s = get_tentative_marcov_chain(sub_id);
-        other_pixels_marcov_chain_states.state[i] = s;
-        *own_seed = rand_u32(*own_seed);
+        other_pixels_marcov_chain_states.state[i] = get_tentative_marcov_chain(sub_id);
     }
-    //other_pixels_marcov_chain_states.state[0] = tentative_marcov_chain_state;
+    for (; i < (NUM_RESAMPLES_SCREEN_SPACE_LAST_FRAME + NUM_RESAMPLES_SCREEN_SPACE); i++) {
+        let x_rand = rand_u32(*own_seed);
+        *own_seed = x_rand;
+        let y_rand = rand_u32(*own_seed);
+        *own_seed = y_rand;
+        let x = i32(x_rand % RESAMPLE_SIZE) - RESAMPLE_SIZE_SHIFT;
+        let y = i32(y_rand % RESAMPLE_SIZE) - RESAMPLE_SIZE_SHIFT;
+        // TODO: what about out of range pixels? Should we skip them?
+        let neighbour = vec2<u32>(vec2<i32>(pix_pos) + vec2<i32>(x, y));
+        let idx = neighbour.x + (neighbour.y * size.x);
+        other_pixels_marcov_chain_states.state[i] = old_markov_chains[idx];
+    }
+}
+
+const JITTER_SIZE = GRID_SIZE;
+//const JITTER_SIZE = 0.0;
+fn fill_mc_world_space_states(own_seed: ptr<function, u32>, pos: vec3<f32>, normal: vec3<f32>, incoming: vec3<f32>) {
+    for (var i = 0; i < NUM_RESAMPLES_WORLD_SPACE; i++) {
+        let rand_candidate = rand_f32(*own_seed) < 0.7;
+        let jitter_mul = select(1.0, 0.25, rand_candidate);
+        let s = grid_load(pos + (rand_vec3_f32(own_seed)*JITTER_SIZE*jitter_mul), normal + (rand_vec3_f32(own_seed)*JITTER_SIZE*0.05*jitter_mul), incoming + (rand_vec3_f32(own_seed)*JITTER_SIZE*jitter_mul), rand_candidate);
+        other_pixels_marcov_chain_states.state[(NUM_RESAMPLES_SCREEN_SPACE + NUM_RESAMPLES_SCREEN_SPACE_LAST_FRAME) + i] = s;
+        *own_seed++;
+    }
+    other_pixels_marcov_chain_states.state[NUM_NON_PIXEL_RESAMPLES] = tentative_marcov_chain_state;
 }
 
 var<private> sum_mc: f32;
 
-fn resample_mcmm(own_seed: ptr<function, u32>) -> MarcovChainState {
+fn resample_mcmm(own_seed: ptr<function, u32>, origin: vec3<f32>, normal: vec3<f32>) -> MarcovChainState {
     var s = MarcovChainState();
     sum_mc = 0.0;
     for (var i = 0; i < NUM_RESAMPLES; i++) {
@@ -130,8 +352,12 @@ fn resample_mcmm(own_seed: ptr<function, u32>) -> MarcovChainState {
         *own_seed = rand_u32(*own_seed);
         let s_candidate = other_pixels_marcov_chain_states.state[i];
         sum_mc += s_candidate.weight_sum;
+
+        let mean = get_light_dir(s, origin);
+        let weight = s_candidate.weight_sum;// * select(0.0, 1.0, dot(mean, normal) > 0);
+
         var rand = rand_f32(*own_seed);
-        if (rand * sum_mc) < s_candidate.weight_sum {
+        if (rand * sum_mc) < weight {
             s = s_candidate;
         }
         *own_seed = rand_u32(*own_seed);
@@ -177,9 +403,11 @@ const FLOAT_MAX = 3.40282347E+38;
 //    }
 //}
 
-fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, pdf: f32, p_hat: f32, seed: u32, not_vmf: bool) {
+fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, p_hat: f32, seed: u32, not_vmf: bool, old_state: MarcovChainState) -> MarcovChainState {
+    var state = old_state;
     if not_vmf {
-        tentative_marcov_chain_state = MarcovChainState();
+        // While the origional paper used this, the newer one instead resets if it couldn't find the light
+        state = MarcovChainState();
     }
     let score = p_hat;
     let rand = rand_f32(seed);
@@ -189,19 +417,20 @@ fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, pdf: f
         tentative_marcov_chain_state.weight_sum = score;
         tentative_marcov_chain_state.light_source = score * x2;
         tentative_marcov_chain_state.mean_cosine = score;
-    } else */if (rand * sum_mc < (p_hat * f32(NUM_RESAMPLES))) {
-        if near_zero(length(get_light_dir(tentative_marcov_chain_state, x1))) {
-            return;
+    } else */if ((rand * sum_mc) < (p_hat * f32(NUM_RESAMPLES))) {
+        if near_zero(length(get_light_dir(state, x1))) {
+            return state;
         }
-        tentative_marcov_chain_state.num_samples = min(tentative_marcov_chain_state.num_samples + 1, MARCOV_CHAIN_SAMPLE_CLAMP);
-        let alpha = max(1.0 / f32(tentative_marcov_chain_state.num_samples), 0.1);
-        tentative_marcov_chain_state.weight_sum = mix(tentative_marcov_chain_state.weight_sum, score, alpha);
-        tentative_marcov_chain_state.light_source = mix(tentative_marcov_chain_state.light_source, score * x2, alpha);
-        let mean = normalize(get_light_dir(tentative_marcov_chain_state, x1));
-        //tentative_marcov_chain_state.light_source = mix(tentative_marcov_chain_state.light_source, x2, alpha);
-        tentative_marcov_chain_state.mean_cosine = mix(tentative_marcov_chain_state.mean_cosine, score * dot(normalize(x2 - x1), mean), alpha);
-        //tentative_marcov_chain_state.mean_cosine = tentative_marcov_chain_state.weight_sum * 0.9;
+        state.num_samples = min(state.num_samples + 1, MARCOV_CHAIN_SAMPLE_CLAMP);
+        let alpha = max(1.0 / f32(state.num_samples), 0.01);
+        state.weight_sum = mix(state.weight_sum, score, alpha);
+        state.light_source = mix(state.light_source, score * x2, alpha);
+        let mean = normalize(get_light_dir(state, x1));
+        //state.light_source = mix(state.light_source, x2, alpha);
+        state.mean_cosine = mix(state.mean_cosine, score * dot(normalize(x2 - x1), mean), alpha);
+        //state.mean_cosine = state.weight_sum * 0.9;
     }
+    return state;
 }
 
 /// Returns an unnormalized vector from the `current` to the light
@@ -218,7 +447,7 @@ fn rt_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) 
         return;
     }
     let idx = id.x + (id.y * screen_size.x);
-    tentative_marcov_chain_state = lights.samples[idx];
+    tentative_marcov_chain_state = old_markov_chains[idx];
     let x = f32(id.y)/f32(screen_size.y);
     var own_seed = rand_u32((id.x * id.y)) + seed_offset + id.y;
     var pixel_color = vec3<f32>();
@@ -236,7 +465,7 @@ fn rt_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) 
     var pdf = 0.0;
     let next_sub_id = (sub_id + 1) % sub_size;
     for (var i = 0u; i < SAMPLES; i++) {
-        fill_mc_states(&own_seed, sub_size);
+        fill_mc_screen_space_states(&own_seed, sub_size, id.xy, screen_size);
         let ray_sample = rt_sample(id.xy, own_seed, (i == 0u));
         cam_loc = ray_sample.cam_loc;
         pixel_normal = ray_sample.normal;
@@ -263,21 +492,21 @@ fn rt_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) 
         //lights.samples[idx] = update(sample, 1.0, lights.samples[idx], own_seed);
     }
     pdf /= f32(SAMPLES);
-//    if (sample.ty != SKY && sample_valid) {
-//        var R: Reservoir;
-//        let resam_R = old_lights.samples[idx];
-//        R = resam_R;
-//        //R.pdf = saturate(sample.pdf);
-//        let w = p_hat(sample); // Don't think `/ pdf` should be here, in the paper it's here but it's probably part of the out radiance.
-//        R = update(sample, w, R, own_seed, false);
-//        own_seed = rand_u32(own_seed);
-//        R.W = safe_div(R.w, (f32(unpack4xU8(R.confidence8_valid8).x) * p_hat(sam_from_res(R))));
-//        //lights.samples[idx] = R;
-//    }
-    //info[idx] = from_info(Info(cam_loc, pixel_emission, pixel_albedo));
+    if (sample.ty != SKY && sample_valid) {
+        var R: Reservoir;
+        let resam_R = old_gi_reservoirs[idx];
+        R = resam_R;
+        //R.pdf = saturate(sample.pdf);
+        let w = p_hat(sample); // Don't think `/ pdf` should be here, in the paper it's here but it's probably part of the out radiance.
+        R = update(sample, w, R, own_seed, false);
+        own_seed = rand_u32(own_seed);
+        R.W = safe_div(R.w, (f32(unpack4xU8(R.confidence8_valid8).x) * p_hat(sam_from_res(R))));
+        gi_reservoirs[idx] = R;
+    }
+    info[idx] = from_info(Info(cam_loc, pixel_emission, pixel_albedo));
     //lights.samples[idx].out_radiance = out_radiance / f32(SAMPLES);
     //lights.samples[idx].W = lights.samples[idx].w / max(0.00001, (f32(unpack4xU8(lights.samples[idx].M_valid).x) * p_hat(sam_from_res(lights.samples[idx]), pixel_normal, lights.samples[idx].sample_point, pixel_albedo, -normalize(lights.samples[idx].sample_point - cam_loc))));
-    lights.samples[idx] = tentative_marcov_chain_state;
+    markov_chains[idx] = tentative_marcov_chain_state;
     textureStore(output_normal, id.xy, vec4<f32>(pixel_normal, 1.0));
     textureStore(output_albedo, id.xy, vec4<f32>(pixel_albedo, 1.0));
     textureStore(output, id.xy, vec4<f32>(max(pixel_color / f32(SAMPLES), vec3<f32>(0.0)), 1.0));
@@ -333,19 +562,35 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
     var accum_emission = vec3<f32>();
     var accum_albedo = vec3<f32>(1.0);
     var picked = PickedRefIdx();
+    var last_normal: vec3<f32>;
     var cached_pdf: f32;
+    var cached_brdf: f32;
     var last_not_vmf = false;
     var vmf_weight = 1.0;
+    let start_dir = ray.direction;
+    var last_dir: vec3<f32>;
+    var last_diffuse = false;
     for (var i = 0u; i < BOUNCES; i++) {
         let intersection = ray_hit(&ray);
         if (intersection.hit) {
             let new_pos = at(&ray, intersection.t);
             // We have at least hit the scene twice (this is our second time)
-            if (i > 1u) && (length(intersection.emission) > 0.0) {
-                update_marcov_state(ray.origin, new_pos, cached_pdf, length(intersection.emission), self_seed, last_not_vmf);
-                self_seed++;
+            if i != 0u {
+                let radiance_reflected = strip_NaN_vec3((intersection.color * grid_load_radiance_estimate(new_pos, intersection.normal, last_dir)) * cached_brdf / cached_pdf);
+                let radiance_out = (intersection.emission * cached_brdf / cached_pdf);
+                grid_add_radiance(ray.origin, last_normal, last_dir, radiance_out + radiance_reflected);
+                let weight = length(radiance_out + (radiance_reflected));
+                if weight > 0.0 {
+                    let state = update_marcov_state(ray.origin, new_pos, weight, self_seed, false, grid_load(ray.origin, last_normal, last_dir, false));
+                    grid_store_markov_chain(ray.origin, last_normal, last_dir, state);
+                    tentative_marcov_chain_state = update_marcov_state(ray.origin, new_pos, length(radiance_out) * select(0.5, 1.0, i == 1), self_seed, last_not_vmf, tentative_marcov_chain_state);
+                    self_seed++;
+                }
             }
+            last_normal = intersection.normal;
+            last_dir = ray.direction;
             last_not_vmf = false;
+            last_diffuse = false;
             ray.origin = new_pos;
             accum_emission = fma(intersection.emission, accum_albedo, accum_emission);
             accum_albedo *= intersection.color;
@@ -360,10 +605,10 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                 sample.visible_point = ray.origin;
                 sample.visible_normal = intersection.normal;
             }
-            if ((intersection.tri_area > SMALL_VAL) && previously_diffuse) {
+            /*if ((intersection.tri_area > SMALL_VAL) && previously_diffuse) {
                 //sample.color = vec3f(intersection.tri_area);
                 //return sample;
-            }
+            }*/
             /*if ((intersection.tri_area > SMALL_VAL) && should_push && previously_diffuse) {
                 push(vec4<f32>(ray.origin, intersection.tri_area));
                 previously_diffuse = false;
@@ -371,7 +616,7 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                 //return sample;
             }*/
             sample.color = fma(color, intersection.emission, sample.color);
-            if (!(i_diffuse == 0u)) {
+            if (!(i == 0u)) {
                 sample.out_radiance = fma(out_radiance_colour, intersection.emission, sample.out_radiance);
             }
             let assign_normal = get_normal(ray.direction, intersection.normal, intersection.tangent, self_seed, intersection.roughness);
@@ -390,6 +635,7 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                 refractive_index = 1.0 / refractive_index;
             }
             color *= colour_refractive_index.xyz;
+            out_radiance_colour *= colour_refractive_index.xyz;
             if (refractive_index != 1.0) {
                 let cos_theta = min(dot(-ray.direction, normal), 1.0);
                 let sin_theta = sqrt(1.0 - (cos_theta*cos_theta));
@@ -410,7 +656,7 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
 
             if ((!should_reflect) || (intersection.ty == TRANSPARENT)) {
                 color = color * intersection.color;
-                if (!(i_diffuse == 0u)) {
+                if (!(i == 0u)) {
                     out_radiance_colour = out_radiance_colour * intersection.color;
                 }
             }
@@ -419,8 +665,8 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                 normal = assign_normal;
                 self_seed = self_seed + 1u;
             }
-
-            var s = resample_mcmm(&self_seed);
+            fill_mc_world_space_states(&self_seed, ray.origin, intersection.normal, ray.direction);
+            var s = resample_mcmm(&self_seed, ray.origin, intersection.normal);
 
             //sample.color = (normal);
             //return sample;
@@ -429,6 +675,7 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
             let reflecting = should_reflect || intersection.ty == METALLIC;
             if (!reflecting) {
                 if (intersection.ty == DIFFUSE) {
+                    last_diffuse = true;
                     // old direction code
                     /*let direction = rand_on_sphere(self_seed);
                     let dot = dot(direction, intersection.normal);
@@ -441,7 +688,8 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                     var dir: vec3<f32>;
                     // Prepare for markov chain
                     //s.light_source = vec3<f32>(0.0, 1.0, 0.0);
-                    let mean = normalize(get_light_dir(s, ray.origin));
+                    let light_dir = get_light_dir(s, ray.origin);
+                    let mean = normalize(light_dir);
                     let kappa = get_kappa(s);
                     // Calculate cosine direction
                     let dir_cosine = cosine_weighted_hemisphere(self_seed, intersection.normal, intersection.tangent);
@@ -456,12 +704,12 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                     var W = 1.0 + W_minus_1;
                     // slightly more precise than `sqrt(1.0 - (W*W))`
                     let norm_V = sqrt(-fma(W_minus_1, W_minus_1, 2*W_minus_1));
-                    let Xs = from_onb_no_tangent(vec3(V.x * norm_V, W, V.y * norm_V), mean);
+                    let Xs = from_onb_no_tangent(vec3(strip_NaN(V.x * norm_V), W, strip_NaN(V.y * norm_V)), mean);
                     let dir_markov = normalize(Xs);
                     // Calculate pdf of cosine for cosine direction
                     var unnormalied_confidences = array<f32, 2>(0.2, 0.8);
                     //var unnormalied_confidences = array<f32, 2>(0.8 , 0.2);
-                    if (!marcov_chain_valid(s) || near_zero(length(get_light_dir(s, ray.origin))) || near_zero(s.weight_sum)) {
+                    if (!marcov_chain_valid(s) || near_zero(length(light_dir)) || near_zero(s.weight_sum) || near_zero(length(Xs))) {
                         unnormalied_confidences[0] = 1.0;
                         unnormalied_confidences[1] = 0.0;
                     }
@@ -478,13 +726,13 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                         //final_pdf = max(dot(dir, intersection.normal) / PI, 0.0);
                         last_not_vmf = true;
                     } else {
-                        dir = dir_markov;
+                        dir = (dir_markov);
                         //final_pdf = vmf_pdf(mean, kappa, dir_markov);
                         //sample.color = (dir_markov + 1) / 2;
                         //return sample;
                     }
                     let cosine_pdf = max(dot(dir, intersection.normal) / PI, 0.0);
-                    let avg_pdf = ((confidences[0] * cosine_pdf) + select(confidences[1] * all_vmf_pdfs(ray.origin, dir), 0.0, confidences[1] == 0.0));
+                    let avg_pdf = ((confidences[0] * cosine_pdf) + select(confidences[1] * max(all_vmf_pdfs(ray.origin, dir), 0.0), 0.0, confidences[1] == 0.0));
                     final_pdf = avg_pdf;
                     norm_divisor = avg_pdf;
                     //vmf_weight *= avg_pdf;
@@ -494,15 +742,17 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                     //let dot = max(dot(dir, normal), 0.0) / dot(dir, intersection.normal);
                     //color = color * dot;
                     //ray.direction = dir;
-                    /*if (diffuse.brightness < 0.0) {
-                        sample.color = vec3f(0.0, 1.0, 0.0);
-                        return sample;
-                    }*/
+                    if (any(strip_NaN_vec3(dir) != dir)) {
+                        //sample.color = vec3f(0.0, 1.0, 0.0);
+                        //return sample;
+                    }
                     cached_pdf = final_pdf;
-                    let normalization_factor = abs(dot(dir, intersection.normal) / PI) / norm_divisor;
+                    cached_brdf = max(dot((dir), intersection.normal) / PI, 0.0);
+                    let normalization_factor = (abs(cached_brdf)) / max(norm_divisor, 0.001);
                     color = color * normalization_factor * diffuse;
-                    if (!(i_diffuse == 0u)) {
-                        out_radiance_colour = out_radiance_colour * normalization_factor * diffuse;
+                    out_radiance_colour = out_radiance_colour * normalization_factor * diffuse;
+                    if (!(i == 0u)) {
+                        
                     }
                     ray.direction = dir;
                     previously_diffuse = true;
@@ -513,6 +763,8 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                     //sample.color = ray.direction;
                     //return sample;
                 } else if (intersection.ty == TRANSPARENT) {
+                    cached_pdf = 1.0;
+                    cached_brdf = 1.0;
                     //let k = 1.0 - refractive_index * refractive_index * (1.0 - dot(intersection.normal, ray.direction) * dot(intersection.normal, ray.direction));
                     ray.direction = refract(ray.direction, normal, refractive_index);
                     let dot = dot(-ray.direction, intersection.normal);
@@ -526,6 +778,8 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                     //return sample;
                 }
             } else {
+                cached_pdf = 1.0;
+                cached_brdf = 1.0;
                 ray.direction = reflect(ray.direction, normal);
                 let dot = dot(ray.direction, intersection.normal);
                 if (dot < 0.0) {
@@ -560,13 +814,43 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
             break;
         }
     }
+
+    // A final train of the markov chain with the real radiance
+    //sample.out_radiance = (sample.color - sample.emission) / sample.albedo;
+    let world_cache = grid_load(sample.point, sample.normal, start_dir, false);
+    // Sometimes the radiance cache can be a little off (especially on reflections), this fixes it.
+    let state = update_marcov_state(sample.point, sample.visible_point, length(sample.out_radiance) * 2.0, self_seed, last_not_vmf, world_cache);
+    grid_store_markov_chain(sample.point, sample.normal, start_dir, state);
+    grid_add_radiance(sample.point, sample.normal, start_dir, sample.out_radiance);
+
     sample.color /= vmf_weight;
+    sample.out_radiance /= vmf_weight;
+    storageBarrier();
+    //sample.color = vec3(get_kappa(tentative_marcov_chain_state) / 100.0);
+    //sample.color = vec3((normalize(get_light_dir(tentative_marcov_chain_state, sample.point)) + 1.0) / 2.0);
+    //sample.color = vec3(get_kappa(world_cache) / 50.0);
+    //sample.color = vec3((normalize(get_light_dir(world_cache, sample.point)) + 1.0) / 2.0);
+    //sample.color = vec3(f32(world_cache.num_samples) / f32(MARCOV_CHAIN_SAMPLE_CLAMP));
+    //sample.color = vec3(world_cache.weight_sum / 1.0);
+    //sample.color = sample.out_radiance;
+    //sample.color = (grid_load_radiance_estimate(sample.point, sample.normal, start_dir));
+    let grid_pos = vec3<i32>(sample.point / GRID_SIZE);
+    let hash = primary_hasher(grid_pos, sample.normal, start_dir);
+    //sample.color = u32_to_colour(hash);
     //let tex_coord = vec2<u32>((vec2<f32>(coord) / vec2<f32>(textureDimensions(output))) * 64.0);
     //sample.color = textureLoad(tex_attributes, tex_coord, 0u, 0).xyz;
     //sample.color = vec3<f32>(vec2<f32>(tex_sizes[1u].size[1]), 0.0);
     //sample.pdf = saturate(sample.pdf);
+    //sample.color = strip_NaN_vec3(sample.color);
     sample.valid = true;//(i_diffuse > 1u);
     return sample;
+}
+
+fn u32_to_colour(u:u32) -> vec3<f32> {
+    let r = (0xFFE00000 & u) >> 20;
+    let g = (0xFFC00 & u) >> 10;
+    let b = (0x3FF & u);
+    return vec3<f32>(f32(r) / f32(0x7FF), f32(g) / f32(0x3FF), f32(b) / f32(0x3FF));
 }
 
 fn all_vmf_pdfs(hit:vec3<f32>, direction:vec3<f32>) -> f32 {
@@ -597,8 +881,9 @@ fn get_kappa(state: MarcovChainState) -> f32 {
     //let r = rp;
     // We don't want this to be zero or infinity
     // These values are large due to the large amount of floating point inacuracies there are
-    //return max((3.0 * r) - (r*r*r) / max(1 - (r*r), 0.0001), 0.1);
-    return ((3.0 * r) - (r*r*r)) / (1.0 - (r*r));
+    //return max((3.0 * r) - (r*r*r) / max(1 - (r*r), 1.17549435E-38f), 1.17549435E-38f);
+    return clamp(((3.0 * r) - (r*r*r)) / (1.0 - (r*r)), 0.001, 8.50705867e37);
+    //return (((3.0 * r) - (r*r*r)) / (1.0 - (r*r)));
     //return 1000.0;
 }
 
@@ -868,7 +1153,7 @@ fn oren_nayer_improved(in: vec3<f32>, seed:u32, roughness:f32, normal:vec3<f32>,
 const U16_MAX = 0xFFFFu;
 
 fn normalised_to_u32(normalized:vec3<f32>) -> u32 {
-    let v = normalized / (abs(normalized.x) + abs(normalized.y) + abs(normalized.z));
+    let v = normalized / max((abs(normalized.x) + abs(normalized.y) + abs(normalized.z)), 0.01);
     var out = 0u;
     if (v.y >= 0.0) {
         out = pack2x16snorm(v.xz);

@@ -77,11 +77,14 @@ pub unsafe trait RayTracingShader: Sized + 'static {
         // limits required to interact
         Limits {
             max_push_constant_size: 4.max(limit.max_push_constant_size),
-            max_storage_buffer_binding_size: (Limits::default()
-                .max_storage_buffer_binding_size)
+            max_storage_buffer_binding_size: (Limits::default().max_storage_buffer_binding_size)
                 .max(limit.max_storage_buffer_binding_size),
             max_binding_array_elements_per_shader_stage: 500_000
                 .max(limit.max_binding_array_elements_per_shader_stage),
+            max_acceleration_structures_per_shader_stage: 16.max(limit.max_acceleration_structures_per_shader_stage),
+            max_blas_geometry_count: ((1 << 24) - 1).max(limit.max_blas_geometry_count),
+            max_tlas_instance_count: ((1 << 24) - 1).max(limit.max_tlas_instance_count),
+            max_blas_primitive_count: (1 << 28).max(limit.max_blas_primitive_count),
             ..limit
         }
     }
@@ -389,6 +392,46 @@ pub(crate) fn out_bgl(device: &Device) -> BindGroupLayout {
                 visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 8,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 9,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 10,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 11,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },

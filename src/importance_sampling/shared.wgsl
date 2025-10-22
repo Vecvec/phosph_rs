@@ -61,25 +61,11 @@ struct Sample {
     //rand: array<u32, BOUNCES>,
 }
 
-struct Reservoir {
-    visible_point: vec3<f32>,   // 0 16 12
-    visible_normal: u32,        // 12 4 4
-    sample_point: vec3<f32>,    // 16 16 12
-    sample_normal: u32,         // 28 4 4
-    out_radiance: vec3<f32>,    // 32 16 12
-    ty: u32,                    // 44 4 4
-    roughness: f32,             // 48 4 4
-    pdf:f32,                    // 52 4 4
-    w: f32,                     // 56 4 4
-    confidence8_valid8: u32,    // 60 4 4
-    W: f32,                     // 64 4 4
-}
-
 struct WorkgroupLights {
     samples: array<MarcovChainState>
 }
 
-const CONFIDENCE_CAP = 1u;
+const CONFIDENCE_CAP = 4294967295u;
 
 fn update(s_new:Sample, w_new:f32, reservoir: Reservoir, seed:u32, always_update:bool) -> Reservoir {
     var new_reservoir = reservoir;
@@ -274,8 +260,18 @@ const U32_MAX = 0xFFFFFFFFu;
 const RECIP_U32_MAX = 1.0 / f32(U32_MAX);
 
 fn rand_f32(own_seed:u32) -> f32 {
+    var seed = own_seed;
+    return rand_f32_ptr(&seed);
+}
+
+fn rand_f32_ptr(own_seed:ptr<function, u32>) -> f32 {
+    *own_seed = rand_u32(*own_seed);
     // fract is to handle edge cases (divide not being perfect)
-    return fract(f32(rand_u32(own_seed)) * RECIP_U32_MAX);
+    return fract(f32(*own_seed) * RECIP_U32_MAX);
+}
+
+fn rand_vec3_f32(own_seed:ptr<function, u32>) -> vec3<f32> {
+    return vec3(rand_f32_ptr(own_seed), rand_f32_ptr(own_seed), rand_f32_ptr(own_seed));
 }
 
 fn safe_div(numerator: f32, denominator: f32) -> f32 {

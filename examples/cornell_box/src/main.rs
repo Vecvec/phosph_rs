@@ -3,11 +3,11 @@ use futures::executor::block_on;
 use glfw::{fail_on_errors, ClientApiHint, WindowHint, WindowMode};
 use phosph_rs::camera::Camera;
 use phosph_rs::importance_sampling::SpatialResampling;
-use phosph_rs::refractive_indices;
+use phosph_rs::{refractive_indices, BufferType};
 use phosph_rs::textures::TextureLoader;
 use phosph_rs::{
-    dispatch_size, importance_sampling::DataBuffers, path_tracing, low_level::pipeline_layout, textures,
-    Descriptor, Material, MaterialType, low_level::RayTracingShaderDST,
+    dispatch_size, DataBuffers, low_level::pipeline_layout,
+    path_tracing, textures, Descriptor, Material, MaterialType,
 };
 use std::cmp::{max, min};
 use std::marker::PhantomData;
@@ -20,15 +20,31 @@ use std::{iter, mem};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 #[cfg(feature = "denoise")]
 use wgpu::MapMode;
-use wgpu::{include_wgsl, AccelerationStructureFlags, AccelerationStructureGeometryFlags, AccelerationStructureUpdateMode, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlasBuildEntry, BlasGeometries, BlasGeometrySizeDescriptors, BlasTriangleGeometry, BlasTriangleGeometrySizeDescriptor, BufferAddress, BufferBinding, BufferBindingType, BufferUsages, ColorTargetState, CommandEncoderDescriptor, ComputePassDescriptor, ComputePipelineDescriptor, CreateBlasDescriptor, CreateTlasDescriptor, DeviceDescriptor, Extent3d, Features, FragmentState, IndexFormat, InstanceDescriptor, Limits, Operations, PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode, PushConstantRange, RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, RequestAdapterOptions, ShaderStages, SurfaceError, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension, TlasInstance, TlasPackage, VertexFormat, VertexState};
+use wgpu::{
+    include_wgsl, AccelerationStructureFlags, AccelerationStructureGeometryFlags,
+    AccelerationStructureUpdateMode, BindGroupDescriptor, BindGroupEntry,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlasBuildEntry,
+    BlasGeometries, BlasGeometrySizeDescriptors, BlasTriangleGeometry,
+    BlasTriangleGeometrySizeDescriptor, BufferAddress, BufferBindingType,
+    BufferUsages, ColorTargetState, CommandEncoderDescriptor, ComputePassDescriptor,
+    ComputePipelineDescriptor, CreateBlasDescriptor, CreateTlasDescriptor, DeviceDescriptor,
+    Extent3d, Features, FragmentState, IndexFormat, InstanceDescriptor, Limits, Operations,
+    PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode, PushConstantRange,
+    RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor,
+    RequestAdapterOptions, ShaderStages, SurfaceError, TextureDescriptor, TextureDimension,
+    TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
+    TlasInstance, VertexFormat, VertexState,
+};
+#[cfg(feature = "no-vertex-return")]
+use wgpu::BufferBinding;
 
-const SHADER: &dyn RayTracingShaderDST = &path_tracing::Medium;
+type RayTracer = phosph_rs::RayTracer<path_tracing::Medium>;
 
 const SIZE: u32 = 320;
 
-const SAMPLES: usize = 4;
+const SAMPLES: usize = 8;
 
-const IS_SAMPLES: usize = 32;
+const IS_SAMPLES: usize = 2;
 
 const IS_SPACE: usize = 31;
 
@@ -36,7 +52,7 @@ const LIGHT_SIZE: f32 = 0.1;
 /// Total light produced, correlated to lumens.
 const LIGHT_BRIGHTNESS: f32 = 1.0;
 /// The brightness of the light at a point.
-const POINT_BRIGHTNESS:f32 = LIGHT_BRIGHTNESS / (LIGHT_SIZE * LIGHT_SIZE);
+const POINT_BRIGHTNESS: f32 = LIGHT_BRIGHTNESS / (LIGHT_SIZE * LIGHT_SIZE);
 
 fn main() {
     env_logger::init();
@@ -228,34 +244,34 @@ fn main() {
         adapter.limits().max_binding_array_elements_per_shader_stage as usize,
         maximum,
     );
-    let (device, queue) = block_on(adapter.request_device(
-        &DeviceDescriptor {
-            label: None,
-            required_features: SHADER.features()
-                | Features::TEXTURE_BINDING_ARRAY
-                | Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
-                | Features::BGRA8UNORM_STORAGE
-                | SpatialResampling::features(),
-            // it's recommended to only use limits you need (due to possible perf issues)
-            required_limits: SHADER.limits_or(Limits {
-                max_binding_array_elements_per_shader_stage: max(
-                    target_exe_num as u32,
-                    Limits::default().max_binding_array_elements_per_shader_stage,
-                ),
-                min_subgroup_size: adapter.limits().min_subgroup_size,
-                max_subgroup_size: adapter.limits().max_subgroup_size,
-                ..Limits::default()
-            }),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: Default::default(),
-        },
-    ))
+    let (device, queue) = block_on(adapter.request_device(&DeviceDescriptor {
+        label: None,
+        required_features: RayTracer::required_features()
+            | Features::TEXTURE_BINDING_ARRAY
+            | Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+            | Features::BGRA8UNORM_STORAGE
+            | SpatialResampling::features(),
+        // it's recommended to only use limits you need (due to possible perf issues)
+        required_limits: RayTracer::combine_required_limits(Limits {
+            max_binding_array_elements_per_shader_stage: max(
+                target_exe_num as u32,
+                Limits::default().max_binding_array_elements_per_shader_stage,
+            ),
+            min_subgroup_size: adapter.limits().min_subgroup_size,
+            max_subgroup_size: adapter.limits().max_subgroup_size,
+            ..Limits::default()
+        }),
+        memory_hints: wgpu::MemoryHints::default(),
+        trace: Default::default(),
+    }))
     .unwrap();
     println!(
         "targeting {} samples with {} execution(s)",
         samples * target_exe_num,
         target_exe_num
     );
+
+    let ray_tracer = RayTracer::new(&device); 
 
     let mut glfw = glfw::init(fail_on_errors!()).unwrap();
     // on some platforms this fixes crashes
@@ -301,11 +317,7 @@ fn main() {
     let attribute_textures =
         loader_attributes.create_textures(&device, &queue, TextureUsages::empty());
 
-    let buffers = DataBuffers::new(
-        &device,
-        SIZE,
-        SIZE,
-    );
+    let buffers = DataBuffers::new(&device, SIZE, SIZE, 1_500_000, BufferType::all());
     let (texture_bg, _) = textures::bind_group_from_textures(
         &device,
         &queue,
@@ -324,32 +336,25 @@ fn main() {
         NonZeroU32::new(1).unwrap(),
         &[],
     );
-    let shader = SHADER.create_shader();
-    let shader = device.create_shader_module(shader.descriptor());
-    let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        module: &shader,
-        entry_point: Some("rt_main"),
-        compilation_options: PipelineCompilationOptions {
-            constants: &[
-                ("SAMPLES", samples as f64),
-                //("IMPORTANCE_LIKELIHOOD".to_string(), 0.3),
-            ],
-            ..Default::default()
-        },
-        cache: None,
-    });
+
+    let compute_pipeline = ray_tracer.create_pipeline(
+        NonZeroU32::new(1).unwrap(),
+        NonZeroU32::new(4).unwrap(),
+        NonZeroU32::new(1).unwrap(),
+        NonZeroU32::new(1).unwrap(),
+        &[("SAMPLES", SAMPLES as f64),],
+    );
+
     let is_shader = SpatialResampling::create_shader();
     let is_shader = device.create_shader_module(is_shader.descriptor());
-    let is_compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+    let is_compute_pipeline: wgpu::ComputePipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
         label: None,
         layout: Some(&pipeline_layout),
         module: &is_shader,
         entry_point: None,
         compilation_options: PipelineCompilationOptions {
             constants: &[
-                //("SAMPLES".to_string(), SAMPLES as f64),
+                //("SAMPLES", SAMPLES as f64),
                 ("IS_SAMPLES", IS_SAMPLES as f64),
                 ("IS_SPACE", IS_SPACE as f64),
                 //("IMPORTANCE_LIKELIHOOD".to_string(), 0.3),
@@ -457,28 +462,25 @@ fn main() {
     #[cfg(feature = "no-vertex-return")]
     const VERTEX_RETURN_FLAG: AccelerationStructureFlags = AccelerationStructureFlags::empty();
     #[cfg(not(feature = "no-vertex-return"))]
-    const VERTEX_RETURN_FLAG: AccelerationStructureFlags = AccelerationStructureFlags::empty();
-    let tlas = device.create_tlas(&CreateTlasDescriptor {
+    const VERTEX_RETURN_FLAG: AccelerationStructureFlags = AccelerationStructureFlags::ALLOW_RAY_HIT_VERTEX_RETURN;
+    let mut tlas = device.create_tlas(&CreateTlasDescriptor {
         label: None,
         max_instances: 1,
-        flags: AccelerationStructureFlags::PREFER_FAST_TRACE
-            | VERTEX_RETURN_FLAG,
+        flags: AccelerationStructureFlags::PREFER_FAST_TRACE | VERTEX_RETURN_FLAG,
         update_mode: AccelerationStructureUpdateMode::Build,
     });
     let blas = device.create_blas(
         &CreateBlasDescriptor {
             label: Some("test blas"),
-            flags: AccelerationStructureFlags::PREFER_FAST_TRACE
-                | VERTEX_RETURN_FLAG,
+            flags: AccelerationStructureFlags::PREFER_FAST_TRACE | VERTEX_RETURN_FLAG,
             update_mode: AccelerationStructureUpdateMode::Build,
         },
         BlasGeometrySizeDescriptors::Triangles {
             descriptors: vec![blas_size.clone()],
         },
     );
-    let mut tlas_package = TlasPackage::new(tlas);
 
-    *tlas_package.get_mut_single(0).unwrap() = Some(TlasInstance::new(
+    *tlas.get_mut_single(0).unwrap() = Some(TlasInstance::new(
         &blas,
         [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
         0,
@@ -490,6 +492,8 @@ fn main() {
 
     let proj = cgmath::perspective(cgmath::Deg(45.0f32), 1.0, 0.1, 200.0);
     let view = Matrix4::look_to_rh(eye, aim, Vector3::unit_y());
+    //let proj = cgmath::perspective(cgmath::Deg(90.0f32), 1.0, 0.1, 200.0);
+    //let view = Matrix4::look_at_rh(Point3::new(0.7, 0.9, 0.7), Point3::new(0.62, 0.66, 0.44), Vector3::unit_y());
     let cam = Camera::from_proj_view(proj.into(), view.into()).unwrap();
 
     let texture_unused = device.create_texture(&TextureDescriptor {
@@ -544,7 +548,7 @@ fn main() {
                 transform_buffer_offset: None,
             }]),
         }),
-        iter::once(&tlas_package),
+        iter::once(&tlas),
     );
     queue.submit(Some(encoder.finish()));
 
@@ -572,11 +576,11 @@ fn main() {
             },
             BindGroupEntry {
                 binding: 2,
-                resource: BindingResource::AccelerationStructure(tlas_package.tlas()),
+                resource: BindingResource::AccelerationStructure(&tlas),
             },
             BindGroupEntry {
                 binding: 3,
-                resource: BindingResource::BufferArray(&[BufferBinding{
+                resource: BindingResource::BufferArray(&[BufferBinding {
                     buffer: &vertex_buffer,
                     offset: 0,
                     size: None,
@@ -584,12 +588,12 @@ fn main() {
             },
             BindGroupEntry {
                 binding: 4,
-                resource:  BindingResource::BufferArray(&[BufferBinding{
+                resource: BindingResource::BufferArray(&[BufferBinding {
                     buffer: &index_buffer,
                     offset: 0,
                     size: None,
                 }]),
-            }
+            },
         ],
     });
     #[cfg(not(feature = "no-vertex-return"))]
@@ -609,7 +613,7 @@ fn main() {
             },
             BindGroupEntry {
                 binding: 2,
-                resource: BindingResource::AccelerationStructure(tlas_package.tlas()),
+                resource: BindingResource::AccelerationStructure(&tlas),
             },
         ],
     });
@@ -712,8 +716,9 @@ fn main() {
                 let size = dispatch_size(SIZE, SIZE);
                 comp_pass.dispatch_workgroups(size.width, size.height, 1);
             }
-            // we use the non-temporal advance because (when importance sampling gets added) averaging reused data is not a good idea
-            //buffers.advance_frame_no_temporal(&mut encoder);
+            // we use the non-temporal advance for spatial resampling because averaging reused data
+            // is not a good idea
+            buffers.advance_frame(&mut encoder, BufferType::MARKOV_CHAIN_SCREEN_SPACE | BufferType::MARKOV_CHAIN_WORLD_SPACE | BufferType::SPATIAL_RESAMPLING);
             queue.submit(Some(encoder.finish()));
             #[cfg(feature = "denoise")]
             oidn_state.denoise(&device, &queue);

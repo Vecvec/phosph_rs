@@ -1,5 +1,5 @@
 use crate::camera::Camera;
-use crate::importance_sampling::DataBuffers;
+use crate::DataBuffers;
 #[cfg(feature = "wip-features")]
 use crate::importance_sampling::SpatialResampling;
 use crate::low_level::RayTracingShaderDST;
@@ -20,12 +20,12 @@ use wgpu::{
     AccelerationStructureUpdateMode, Adapter, Backends, BindGroupDescriptor, BindGroupEntry,
     BindingResource, BlasBuildEntry, BlasGeometries, BlasGeometrySizeDescriptors,
     BlasTriangleGeometry, BlasTriangleGeometrySizeDescriptor, BufferAddress, BufferUsages,
-    CommandEncoderDescriptor, ComputePassDescriptor,
-    CreateBlasDescriptor, CreateTlasDescriptor, Device, DeviceDescriptor, Extent3d, Features,
-    IndexFormat, Instance, InstanceDescriptor, Origin3d, PresentMode,
-    Queue, RequestDeviceError, Surface, SurfaceError, TexelCopyBufferLayout, TexelCopyTextureInfo,
-    Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
-    TextureViewDescriptor, TextureViewDimension, TlasInstance, TlasPackage, VertexFormat,
+    CommandEncoderDescriptor, ComputePassDescriptor, CreateBlasDescriptor, CreateTlasDescriptor,
+    Device, DeviceDescriptor, Extent3d, Features, IndexFormat, Instance, InstanceDescriptor,
+    Origin3d, PresentMode, Queue, RequestDeviceError, Surface, SurfaceError, TexelCopyBufferLayout,
+    TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor, TextureDimension,
+    TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension, TlasInstance,
+    TlasPackage, VertexFormat,
 };
 
 const SIZE: (u32, u32) = (1280, 720);
@@ -279,15 +279,13 @@ fn run_shader(
         DataBuffers::new(device, width, height)
     }
 
-    let (device, queue) = block_on(adapter.request_device(
-        &DeviceDescriptor {
-            label: Some(adapter.get_info().name.as_str()),
-            required_features: shader.features() | Features::BGRA8UNORM_STORAGE,
-            required_limits: shader.limits(),
-            memory_hints: Default::default(),
-            trace: Default::default(),
-        },
-    ))
+    let (device, queue) = block_on(adapter.request_device(&DeviceDescriptor {
+        label: Some(adapter.get_info().name.as_str()),
+        required_features: shader.features() | Features::BGRA8UNORM_STORAGE,
+        required_limits: shader.limits(),
+        memory_hints: Default::default(),
+        trace: Default::default(),
+    }))
     .map_err(ExcErr::Device)?;
     log::info!(
         "Found device:\n   {}, {:?}",
@@ -372,7 +370,7 @@ fn run_shader(
         &[],
     );
 
-    let compute_pipeline  = shader.create_pipeline(
+    let compute_pipeline = shader.create_pipeline(
         NonZeroU32::new(1).unwrap(),
         NonZeroU32::new(2).unwrap(),
         NonZeroU32::new(2).unwrap(),

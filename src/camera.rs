@@ -41,7 +41,7 @@ impl Camera {
 }
 
 impl Descriptor for Camera {
-    fn buffer_descriptor(&self) -> BufferInitDescriptor {
+    fn buffer_descriptor(&self) -> BufferInitDescriptor<'_> {
         BufferInitDescriptor {
             label: Some("Camera"),
             contents: bytemuck::bytes_of(self),
