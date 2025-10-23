@@ -16,16 +16,7 @@ use std::time::Instant;
 use std::{iter, mem};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
-    AccelerationStructureFlags, AccelerationStructureGeometryFlags,
-    AccelerationStructureUpdateMode, Adapter, Backends, BindGroupDescriptor, BindGroupEntry,
-    BindingResource, BlasBuildEntry, BlasGeometries, BlasGeometrySizeDescriptors,
-    BlasTriangleGeometry, BlasTriangleGeometrySizeDescriptor, BufferAddress, BufferUsages,
-    CommandEncoderDescriptor, ComputePassDescriptor, CreateBlasDescriptor, CreateTlasDescriptor,
-    DeviceDescriptor, Extent3d, Features, IndexFormat, Instance, InstanceDescriptor,
-    Origin3d, PresentMode, Queue, RequestDeviceError, Surface, SurfaceError, TexelCopyBufferLayout,
-    TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor, TextureDimension,
-    TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension, TlasInstance,
-    VertexFormat,
+    AccelerationStructureFlags, AccelerationStructureGeometryFlags, AccelerationStructureUpdateMode, Adapter, Backends, BindGroupDescriptor, BindGroupEntry, BindingResource, BlasBuildEntry, BlasGeometries, BlasGeometrySizeDescriptors, BlasTriangleGeometry, BlasTriangleGeometrySizeDescriptor, BufferAddress, BufferUsages, CommandEncoderDescriptor, ComputePassDescriptor, CreateBlasDescriptor, CreateTlasDescriptor, DeviceDescriptor, ExperimentalFeatures, Extent3d, Features, IndexFormat, Instance, InstanceDescriptor, Origin3d, PresentMode, Queue, RequestDeviceError, Surface, SurfaceError, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension, TlasInstance, VertexFormat
 };
 
 const SIZE: (u32, u32) = (1280, 720);
@@ -275,6 +266,9 @@ fn run_shader(
         required_limits: shader.limits(),
         memory_hints: Default::default(),
         trace: Default::default(),
+        experimental_features: unsafe {
+            ExperimentalFeatures::enabled()
+        },
     }))
     .map_err(ExcErr::Device)?;
     log::info!(

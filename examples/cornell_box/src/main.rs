@@ -3,12 +3,12 @@ use futures::executor::block_on;
 use glfw::{fail_on_errors, ClientApiHint, WindowHint, WindowMode};
 use phosph_rs::camera::Camera;
 use phosph_rs::importance_sampling::SpatialResampling;
-use phosph_rs::{refractive_indices, BufferType};
 use phosph_rs::textures::TextureLoader;
 use phosph_rs::{
-    dispatch_size, DataBuffers, low_level::pipeline_layout,
-    path_tracing, textures, Descriptor, Material, MaterialType,
+    dispatch_size, low_level::pipeline_layout, path_tracing, textures, DataBuffers, Descriptor,
+    Material, MaterialType,
 };
+use phosph_rs::{refractive_indices, BufferType};
 use std::cmp::{max, min};
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
@@ -18,6 +18,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 use std::{iter, mem};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
+#[cfg(feature = "no-vertex-return")]
+use wgpu::BufferBinding;
 #[cfg(feature = "denoise")]
 use wgpu::MapMode;
 use wgpu::{
@@ -25,18 +27,16 @@ use wgpu::{
     AccelerationStructureUpdateMode, BindGroupDescriptor, BindGroupEntry,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlasBuildEntry,
     BlasGeometries, BlasGeometrySizeDescriptors, BlasTriangleGeometry,
-    BlasTriangleGeometrySizeDescriptor, BufferAddress, BufferBindingType,
-    BufferUsages, ColorTargetState, CommandEncoderDescriptor, ComputePassDescriptor,
-    ComputePipelineDescriptor, CreateBlasDescriptor, CreateTlasDescriptor, DeviceDescriptor,
-    Extent3d, Features, FragmentState, IndexFormat, InstanceDescriptor, Limits, Operations,
+    BlasTriangleGeometrySizeDescriptor, BufferAddress, BufferBindingType, BufferUsages,
+    ColorTargetState, CommandEncoderDescriptor, ComputePassDescriptor, ComputePipelineDescriptor,
+    CreateBlasDescriptor, CreateTlasDescriptor, DeviceDescriptor, ExperimentalFeatures, Extent3d,
+    Features, FragmentState, IndexFormat, InstanceDescriptor, Limits, Operations,
     PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode, PushConstantRange,
     RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor,
     RequestAdapterOptions, ShaderStages, SurfaceError, TextureDescriptor, TextureDimension,
     TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
     TlasInstance, VertexFormat, VertexState,
 };
-#[cfg(feature = "no-vertex-return")]
-use wgpu::BufferBinding;
 
 type RayTracer = phosph_rs::RayTracer<path_tracing::Medium>;
 
@@ -263,6 +263,7 @@ fn main() {
         }),
         memory_hints: wgpu::MemoryHints::default(),
         trace: Default::default(),
+        experimental_features: unsafe { ExperimentalFeatures::enabled() },
     }))
     .unwrap();
     println!(
@@ -271,7 +272,7 @@ fn main() {
         target_exe_num
     );
 
-    let ray_tracer = RayTracer::new(&device); 
+    let ray_tracer = RayTracer::new(&device);
 
     let mut glfw = glfw::init(fail_on_errors!()).unwrap();
     // on some platforms this fixes crashes
@@ -342,27 +343,28 @@ fn main() {
         NonZeroU32::new(4).unwrap(),
         NonZeroU32::new(1).unwrap(),
         NonZeroU32::new(1).unwrap(),
-        &[("SAMPLES", SAMPLES as f64),],
+        &[("SAMPLES", SAMPLES as f64)],
     );
 
     let is_shader = SpatialResampling::create_shader();
     let is_shader = device.create_shader_module(is_shader.descriptor());
-    let is_compute_pipeline: wgpu::ComputePipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        module: &is_shader,
-        entry_point: None,
-        compilation_options: PipelineCompilationOptions {
-            constants: &[
-                //("SAMPLES", SAMPLES as f64),
-                ("IS_SAMPLES", IS_SAMPLES as f64),
-                ("IS_SPACE", IS_SPACE as f64),
-                //("IMPORTANCE_LIKELIHOOD".to_string(), 0.3),
-            ],
-            ..Default::default()
-        },
-        cache: None,
-    });
+    let is_compute_pipeline: wgpu::ComputePipeline =
+        device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout),
+            module: &is_shader,
+            entry_point: None,
+            compilation_options: PipelineCompilationOptions {
+                constants: &[
+                    //("SAMPLES", SAMPLES as f64),
+                    ("IS_SAMPLES", IS_SAMPLES as f64),
+                    ("IS_SPACE", IS_SPACE as f64),
+                    //("IMPORTANCE_LIKELIHOOD".to_string(), 0.3),
+                ],
+                ..Default::default()
+            },
+            cache: None,
+        });
 
     #[cfg(feature = "denoise")]
     let oidn_device = oidn::Device::new();
@@ -462,7 +464,8 @@ fn main() {
     #[cfg(feature = "no-vertex-return")]
     const VERTEX_RETURN_FLAG: AccelerationStructureFlags = AccelerationStructureFlags::empty();
     #[cfg(not(feature = "no-vertex-return"))]
-    const VERTEX_RETURN_FLAG: AccelerationStructureFlags = AccelerationStructureFlags::ALLOW_RAY_HIT_VERTEX_RETURN;
+    const VERTEX_RETURN_FLAG: AccelerationStructureFlags =
+        AccelerationStructureFlags::ALLOW_RAY_HIT_VERTEX_RETURN;
     let mut tlas = device.create_tlas(&CreateTlasDescriptor {
         label: None,
         max_instances: 1,
@@ -718,7 +721,12 @@ fn main() {
             }
             // we use the non-temporal advance for spatial resampling because averaging reused data
             // is not a good idea
-            buffers.advance_frame(&mut encoder, BufferType::MARKOV_CHAIN_SCREEN_SPACE | BufferType::MARKOV_CHAIN_WORLD_SPACE | BufferType::SPATIAL_RESAMPLING);
+            buffers.advance_frame(
+                &mut encoder,
+                BufferType::MARKOV_CHAIN_SCREEN_SPACE
+                    | BufferType::MARKOV_CHAIN_WORLD_SPACE
+                    | BufferType::SPATIAL_RESAMPLING,
+            );
             queue.submit(Some(encoder.finish()));
             #[cfg(feature = "denoise")]
             oidn_state.denoise(&device, &queue);

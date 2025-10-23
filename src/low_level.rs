@@ -50,8 +50,7 @@ pub unsafe trait RayTracingShader: Sized + 'static {
         #[cfg(not(feature = "no-vertex-return"))]
         let maybe_vertex_return = Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN;
         // features required to interact
-        Features::EXPERIMENTAL_RAY_TRACING_ACCELERATION_STRUCTURE
-            | Features::EXPERIMENTAL_RAY_QUERY
+        Features::EXPERIMENTAL_RAY_QUERY
             | Features::STORAGE_RESOURCE_BINDING_ARRAY
             | Features::BUFFER_BINDING_ARRAY
             | Features::STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING

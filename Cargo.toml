@@ -5,8 +5,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wgpu = { git = "https://github.com/Vecvec/wgpu.git", branch = "branch_same" }
-#wgpu = { path = "../wgpu/wgpu" }
+wgpu = "27"
 futures = "0.3.30"
 bytemuck = { version =  "1.22.0", features = ["derive"] }
 cgmath = "0.18"
