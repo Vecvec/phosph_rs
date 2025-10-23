@@ -44,7 +44,7 @@ const SIZE: u32 = 320;
 
 const SAMPLES: usize = 8;
 
-const IS_SAMPLES: usize = 2;
+const IS_SAMPLES: usize = 4;
 
 const IS_SPACE: usize = 31;
 

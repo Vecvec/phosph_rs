@@ -84,8 +84,6 @@ fn pack_confidance(confidance_valid: ConfidanceValid) -> u32 {
     return packed_confidance_valid;
 }
 
-const CONFIDENCE_CAP = MAX_CONFIDANCE;
-
 fn update(s_new:Sample, w_new:f32, reservoir: Reservoir, seed:u32, always_update:bool) -> Reservoir {
     var new_reservoir = reservoir;
     new_reservoir.w = new_reservoir.w + w_new;

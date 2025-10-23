@@ -30,6 +30,7 @@ struct WorldMarcovChainState {
     luminance: array<atomic<u32>, 3>,
     lock: atomic<u32>,
     chain: AtomicMarcovChainState,
+    timeout: u32,
 }
 
 struct Camera {

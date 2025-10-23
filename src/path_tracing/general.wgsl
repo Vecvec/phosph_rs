@@ -141,6 +141,8 @@ fn secondary_hasher(loc: vec3<i32>, normal: vec3<f32>, incoming: vec3<f32>) -> u
 
 const GRID_SIZE: f32 = 0.1;
 
+const CACHE_TIMEOUT = 30u;
+
 fn grid_load(pos: vec3<f32>, normal: vec3<f32>, incoming: vec3<f32>, force_old: bool) -> MarcovChainState {
     let grid_pos = vec3<i32>(pos / GRID_SIZE);
     let hash = primary_hasher(grid_pos, normal, incoming);
@@ -165,6 +167,8 @@ fn grid_load(pos: vec3<f32>, normal: vec3<f32>, incoming: vec3<f32>, force_old: 
         } else {
             s = MarcovChainState();
         }
+    } else {
+        world_markov_chains[idx].timeout = CACHE_TIMEOUT;
     }
     s.light_source.x = strip_NaN(s.light_source.x);
     s.light_source.y = strip_NaN(s.light_source.y);
@@ -192,6 +196,7 @@ fn grid_store_markov_chain(pos: vec3<f32>, normal: vec3<f32>, incoming: vec3<f32
     atomicStore(&world_markov_chains[idx].chain.weight_sum, bitcast<u32>(state.weight_sum));
     atomicStore(&world_markov_chains[idx].chain.num_samples, state.num_samples);
     atomicStore(&world_markov_chains[idx].chain.score, bitcast<u32>(state.score));
+    world_markov_chains[idx].timeout = CACHE_TIMEOUT;
 }
 
 fn grid_load_radiance_estimate(pos: vec3<f32>, normal: vec3<f32>, incoming: vec3<f32>) -> vec3<f32> {
@@ -208,6 +213,8 @@ fn grid_load_radiance_estimate(pos: vec3<f32>, normal: vec3<f32>, incoming: vec3
         } else {
             return vec3(0.0);
         }
+    } else {
+        world_markov_chains[idx].timeout = CACHE_TIMEOUT;
     }
     if (num_samples == 0) {
         return vec3(0.0);
@@ -243,6 +250,7 @@ fn grid_add_radiance(pos:vec3<f32>, normal:vec3<f32>, incoming: vec3<f32>, radia
     let num_samples = atomicLoad(&world_markov_chains[idx].num_samples);
     if (num_samples >= MAX_NUM_SAMPLES) {
         atomicStore(&world_markov_chains[idx].lock, STATE_UNLOCKED);
+        world_markov_chains[idx].timeout = CACHE_TIMEOUT;
         return;
     }
     atomicAdd(&world_markov_chains[idx].num_samples, 1);
@@ -253,6 +261,7 @@ fn grid_add_radiance(pos:vec3<f32>, normal:vec3<f32>, incoming: vec3<f32>, radia
     let radiance_blue = strip_NaN(clamped_radiance.z + bitcast<f32>(atomicLoad(&world_markov_chains[idx].luminance[2])));
     atomicStore(&world_markov_chains[idx].luminance[2], bitcast<u32>(max(radiance_blue, 0.0)));
     atomicStore(&world_markov_chains[idx].lock, STATE_UNLOCKED);
+    world_markov_chains[idx].timeout = CACHE_TIMEOUT;
 }
 
 fn brightness(max:f32, odds: f32) -> f32 {
