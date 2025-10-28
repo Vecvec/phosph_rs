@@ -16,10 +16,12 @@ fn vertex(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {
     }
 }
 
+override SIZE: u32;
+
 @fragment
 fn average(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let id = vec2<u32>(pos.xy);
-    let idx = (id.x + (id.y * 640u)) * 3u;
+    let idx = (id.x + (id.y * SIZE)) * 3u;
     let average = vec4<f32>(input[idx], input[idx + 1u], input[idx + 2u], 1.0);
     return average;
 }

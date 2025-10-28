@@ -6,6 +6,8 @@ var<storage, read_write> output: array<f32>;
 
 var<push_constant> num:u32;
 
+override SIZE: u32;
+
 @workgroup_size(64, 1, 1)
 @compute
 fn average(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -13,7 +15,7 @@ fn average(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var i = 0u; i < num; i ++) {
         average = average + (textureLoad(input[i], id.xy, 0) / f32(num));
     }
-    let idx = (id.x + (id.y * 640u)) * 3u;
+    let idx = (id.x + (id.y * SIZE)) * 3u;
     output[idx] = average.x;
     output[idx + 1u] = average.y;
     output[idx + 2u] = average.z;

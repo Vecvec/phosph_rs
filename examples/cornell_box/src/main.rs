@@ -404,7 +404,10 @@ fn main() {
         layout: Some(&averaging_pipeline_layout),
         module: &average_shader,
         entry_point: Some("average"),
-        compilation_options: PipelineCompilationOptions::default(),
+        compilation_options: PipelineCompilationOptions {
+            constants: &[("SIZE", SIZE as f64)],
+            ..Default::default()
+        },
         cache: None,
     });
 
@@ -431,7 +434,10 @@ fn main() {
         fragment: Some(FragmentState {
             module: &copy_shader,
             entry_point: None,
-            compilation_options: Default::default(),
+            compilation_options: PipelineCompilationOptions {
+                constants: &[("SIZE", SIZE as f64)],
+                ..Default::default()
+            },
             targets: &[Some(ColorTargetState {
                 format: surface_config.format,
                 blend: None,
@@ -837,7 +843,7 @@ impl<'a> OidnState<'a> {
     }
     #[cfg(not(feature = "denoise"))]
     fn new(wgpu_device: &wgpu::Device) -> Self {
-        let buf_size_float = (SIZE * SIZE * 16) as usize;
+        let buf_size_float = (SIZE * SIZE * 3) as usize;
         let staging = wgpu_device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("staging"),
             size: (buf_size_float * mem::size_of::<f32>()) as BufferAddress,
@@ -889,7 +895,7 @@ impl<'a> OidnState<'a> {
                 res.unwrap();
                 send.send(()).unwrap()
             });
-        wgpu_device.poll(wgpu::PollType::Wait).unwrap();
+        wgpu_device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         recv.recv_timeout(Duration::from_secs(5)).unwrap();
         let (send, recv) = mpsc::channel();
         let mut data: Vec<f32> =
@@ -904,7 +910,7 @@ impl<'a> OidnState<'a> {
                 res.unwrap();
                 send.send(()).unwrap()
             });
-        wgpu_device.poll(wgpu::PollType::Wait).unwrap();
+        wgpu_device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         recv.recv_timeout(Duration::from_secs(5)).unwrap();
         self.wgpu_map_write
             .slice(..)
