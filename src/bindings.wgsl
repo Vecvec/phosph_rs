@@ -16,6 +16,12 @@ struct AtomicMarcovChainState {
     score: atomic<u32>,
 }
 
+// To overflow a f32 with this many samples would require an average (not peak) brightness of 
+// > 1,267,650,530,739,316,831,303,078,052,785.5 (~1 nonillion), at that point, there is probably
+// a bug somewhere else that we should be worrying about.
+//
+// Note: at this point, f32 will be off by up to 8 when casting, due to a step size of 16. The
+// error is about 0.000006%. This is probably unnoticable.
 const MAX_NUM_SAMPLES: u32 = 0xFFFFFFF;
 //const MAX_NUM_SAMPLES: u32 = 2;
 

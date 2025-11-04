@@ -338,13 +338,14 @@ fn fill_mc_screen_space_states(own_seed: ptr<function, u32>, sub_size: u32, pix_
     }
 }
 
-const JITTER_SIZE = GRID_SIZE;
+const JITTER_SIZE = GRID_SIZE * 1.5;
 //const JITTER_SIZE = 0.0;
 fn fill_mc_world_space_states(own_seed: ptr<function, u32>, pos: vec3<f32>, normal: vec3<f32>, incoming: vec3<f32>) {
     for (var i = 0; i < NUM_RESAMPLES_WORLD_SPACE; i++) {
         let rand_candidate = rand_f32(*own_seed) < 0.7;
-        let jitter_mul = select(1.0, 0.25, rand_candidate);
-        let s = grid_load(pos + (rand_vec3_f32(own_seed)*JITTER_SIZE*jitter_mul), normal + (rand_vec3_f32(own_seed)*JITTER_SIZE*0.05*jitter_mul), incoming + (rand_vec3_f32(own_seed)*JITTER_SIZE*jitter_mul), rand_candidate);
+        let jitter_mul = select(1.0, 0.75, rand_candidate);
+        let jitter = rand_xz_vec3_f32(own_seed)*JITTER_SIZE*jitter_mul;
+        let s = grid_load(pos + from_onb_no_tangent(jitter, normal), normal, incoming, rand_candidate);
         other_pixels_marcov_chain_states.state[(NUM_RESAMPLES_SCREEN_SPACE + NUM_RESAMPLES_SCREEN_SPACE_LAST_FRAME) + i] = s;
         *own_seed++;
     }
@@ -412,7 +413,7 @@ const FLOAT_MAX = 3.40282347E+38;
 //    }
 //}
 
-fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, p_hat: f32, seed: u32, not_vmf: bool, old_state: MarcovChainState) -> MarcovChainState {
+fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, p_hat: f32, seed: u32, not_vmf: bool, old_state: MarcovChainState, confidance: f32) -> MarcovChainState {
     var state = old_state;
     if not_vmf {
         // While the origional paper used this, the newer one instead resets if it couldn't find the light
@@ -431,7 +432,7 @@ fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, p_hat:
             return state;
         }
         state.num_samples = min(state.num_samples + 1, MARCOV_CHAIN_SAMPLE_CLAMP);
-        let alpha = max(1.0 / f32(state.num_samples), 0.01);
+        let alpha = max(1.0 / f32(state.num_samples), 0.01) * confidance;
         state.weight_sum = mix(state.weight_sum, score, alpha);
         state.light_source = mix(state.light_source, score * x2, alpha);
         let mean = normalize(get_light_dir(state, x1));
@@ -591,9 +592,9 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
                 grid_add_radiance(ray.origin, last_normal, last_dir, radiance_out + radiance_reflected);
                 let weight = length(radiance_out + (radiance_reflected));
                 if weight > 0.0 {
-                    let state = update_marcov_state(ray.origin, new_pos, weight, self_seed, false, grid_load(ray.origin, last_normal, last_dir, false));
+                    let state = update_marcov_state(ray.origin, new_pos, weight, self_seed, false, grid_load(ray.origin, last_normal, last_dir, false), 0.25);
                     grid_store_markov_chain(ray.origin, last_normal, last_dir, state);
-                    tentative_marcov_chain_state = update_marcov_state(ray.origin, new_pos, length(radiance_out) * select(0.5, 1.0, i == 1), self_seed, last_not_vmf, tentative_marcov_chain_state);
+                    tentative_marcov_chain_state = update_marcov_state(ray.origin, new_pos, length(radiance_out) * select(0.5, 1.0, i == 1), self_seed, last_not_vmf, tentative_marcov_chain_state, 1.0);
                     self_seed++;
                 }
             }
@@ -829,7 +830,7 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
     //sample.out_radiance = (sample.color - sample.emission) / sample.albedo;
     let world_cache = grid_load(sample.point, sample.normal, start_dir, false);
     // Sometimes the radiance cache can be a little off (especially on reflections), this fixes it.
-    let state = update_marcov_state(sample.point, sample.visible_point, length(sample.out_radiance) * 2.0, self_seed, last_not_vmf, world_cache);
+    let state = update_marcov_state(sample.point, sample.visible_point, length(sample.out_radiance), self_seed, false, world_cache, 1.0);
     grid_store_markov_chain(sample.point, sample.normal, start_dir, state);
     grid_add_radiance(sample.point, sample.normal, start_dir, sample.out_radiance);
 
@@ -840,7 +841,7 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
     //sample.color = vec3((normalize(get_light_dir(tentative_marcov_chain_state, sample.point)) + 1.0) / 2.0);
     //sample.color = vec3(get_kappa(world_cache) / 50.0);
     //sample.color = vec3((normalize(get_light_dir(world_cache, sample.point)) + 1.0) / 2.0);
-    //sample.color = vec3(f32(world_cache.num_samples) / f32(MARCOV_CHAIN_SAMPLE_CLAMP));
+    //sample.color = vec3(f32(world_cache.num_samples) / f32(MARCOV_CHAIN_SAMPLE_CLAMP), (f32(world_cache.num_samples) / f32(MARCOV_CHAIN_SAMPLE_CLAMP)) * 10.0, (f32(world_cache.num_samples) / f32(MARCOV_CHAIN_SAMPLE_CLAMP)) * 100.0);
     //sample.color = vec3(world_cache.weight_sum / 1.0);
     //sample.color = sample.out_radiance;
     //sample.color = (grid_load_radiance_estimate(sample.point, sample.normal, start_dir));

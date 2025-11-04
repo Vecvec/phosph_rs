@@ -298,6 +298,10 @@ fn rand_vec3_f32(own_seed:ptr<function, u32>) -> vec3<f32> {
     return vec3(rand_f32_ptr(own_seed), rand_f32_ptr(own_seed), rand_f32_ptr(own_seed));
 }
 
+fn rand_xz_vec3_f32(own_seed:ptr<function, u32>) -> vec3<f32> {
+    return vec3(rand_f32_ptr(own_seed), 0.0, rand_f32_ptr(own_seed));
+}
+
 fn safe_div(numerator: f32, denominator: f32) -> f32 {
     return div_or(numerator, denominator, 0.0);
 }

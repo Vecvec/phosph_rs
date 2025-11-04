@@ -829,6 +829,8 @@ impl<'a> OidnState<'a> {
         let mut filter = oidn::RayTracing::new(&device);
         filter.image_dimensions(SIZE as usize, SIZE as usize);
         filter.filter_quality(oidn::Quality::Balanced);
+        filter.hdr(true);
+        filter.clean_aux(true);
         let buffer = device.create_buffer(&vec![0.0; buf_size_float]).unwrap();
         Self {
             filter,
