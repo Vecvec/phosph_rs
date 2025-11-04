@@ -3,12 +3,22 @@ use std::ops::Add;
 
 #[cfg(feature = "no-vertex-return")]
 macro_rules! replace_get_vertex {
-    ($i:expr) => {$i.replace("GET_COMMITTED_VERTEX_POSITIONS", "get_vertices(rayQueryGetCommittedIntersection(&rq))")};
+    ($i:expr) => {
+        $i.replace(
+            "GET_COMMITTED_VERTEX_POSITIONS",
+            "get_vertices(rayQueryGetCommittedIntersection(&rq))",
+        )
+    };
 }
 
 #[cfg(not(feature = "no-vertex-return"))]
 macro_rules! replace_get_vertex {
-    ($i:expr) => {$i.replace("GET_COMMITTED_VERTEX_POSITIONS", "getCommittedHitVertexPositions(&rq)")};
+    ($i:expr) => {
+        $i.replace(
+            "GET_COMMITTED_VERTEX_POSITIONS",
+            "getCommittedHitVertexPositions(&rq)",
+        )
+    };
 }
 
 macro_rules! include_general {

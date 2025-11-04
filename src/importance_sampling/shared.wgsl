@@ -61,30 +61,35 @@ struct Sample {
     //rand: array<u32, BOUNCES>,
 }
 
-struct Reservoir {
-    visible_point: vec3<f32>,   // 0 16 12
-    visible_normal: u32,        // 12 4 4
-    sample_point: vec3<f32>,    // 16 16 12
-    sample_normal: u32,         // 28 4 4
-    out_radiance: vec3<f32>,    // 32 16 12
-    ty: u32,                    // 44 4 4
-    roughness: f32,             // 48 4 4
-    pdf:f32,                    // 52 4 4
-    w: f32,                     // 56 4 4
-    confidence8_valid8: u32,    // 60 4 4
-    W: f32,                     // 64 4 4
-}
-
 struct WorkgroupLights {
-    samples: array<Reservoir>
+    samples: array<MarcovChainState>
 }
 
-const CONFIDENCE_CAP = 1u;
+const MAX_CONFIDANCE = 0x7FFFFFFFu;
+
+struct ConfidanceValid {
+    confidance: u32,
+    valid: u32,
+}
+
+fn unpack_confidance(packed_confidance_valid: u32) -> ConfidanceValid {
+    let confidance = packed_confidance_valid & MAX_CONFIDANCE;
+    let valid = (packed_confidance_valid & (~MAX_CONFIDANCE)) >> 31;
+    return ConfidanceValid(confidance, valid);
+}
+
+fn pack_confidance(confidance_valid: ConfidanceValid) -> u32 {
+    var packed_confidance_valid = confidance_valid.confidance & MAX_CONFIDANCE;
+    packed_confidance_valid |= confidance_valid.valid << 31;
+    return packed_confidance_valid;
+}
 
 fn update(s_new:Sample, w_new:f32, reservoir: Reservoir, seed:u32, always_update:bool) -> Reservoir {
     var new_reservoir = reservoir;
     new_reservoir.w = new_reservoir.w + w_new;
-    new_reservoir.confidence8_valid8 = pack4xU8(min(vec4<u32>(min(unpack4xU8(new_reservoir.confidence8_valid8).x + 1u, CONFIDENCE_CAP), unpack4xU8(new_reservoir.confidence8_valid8).yzw), vec4u(255u)));
+    var confidance_valid = unpack_confidance(new_reservoir.packed_confidance_valid);
+    confidance_valid.confidance++;
+    new_reservoir.packed_confidance_valid = pack_confidance(confidance_valid);
     if (rand_f32(seed) * new_reservoir.w < w_new) {
         assign_sam_to_res(&new_reservoir, s_new);
     }
@@ -99,8 +104,11 @@ struct MergeReturn {
 fn merge(reservoir: Reservoir, r: Reservoir, p: f32, seed:u32) -> MergeReturn {
     var picked_r = false;
     var new_reservoir = reservoir;
-    let w_new = p * r.W * f32(unpack4xU8(r.confidence8_valid8).x);
-    new_reservoir.confidence8_valid8 = pack4xU8(min(vec4<u32>(min(unpack4xU8(new_reservoir.confidence8_valid8).x + unpack4xU8(r.confidence8_valid8).x, CONFIDENCE_CAP), unpack4xU8(new_reservoir.confidence8_valid8).yzw), vec4u(255u)));
+    var confidance_valid = unpack_confidance(new_reservoir.packed_confidance_valid);
+    let other_confidance_valid = unpack_confidance(r.packed_confidance_valid);
+    let w_new = p * r.W * f32(other_confidance_valid.confidance);
+    confidance_valid.confidance += other_confidance_valid.confidance;
+    new_reservoir.packed_confidance_valid = pack_confidance(confidance_valid);
     new_reservoir.w = new_reservoir.w + w_new;
     // This is exquivelent to what is done in the paper but avoids `INF`s and `NAN`s which are undefined in WGSL.
     if (rand_f32(seed) * new_reservoir.w < w_new) {
@@ -120,7 +128,9 @@ fn assign_sam_to_res(reservoir: ptr<function, Reservoir>, s_new: Sample) {
     reservoir.ty = s_new.ty;
     reservoir.roughness = s_new.roughness;
     reservoir.pdf = s_new.pdf;
-    reservoir.confidence8_valid8 = pack4xU8(vec4<u32>(unpack4xU8((*reservoir).confidence8_valid8).x, 1u, unpack4xU8((*reservoir).confidence8_valid8).zw));
+    var confidance_valid = unpack_confidance((*reservoir).packed_confidance_valid);
+    confidance_valid.valid = 1u;
+    reservoir.packed_confidance_valid = pack_confidance(confidance_valid);
 }
 
 fn sam_from_res(r: Reservoir) -> Sample {
@@ -274,13 +284,35 @@ const U32_MAX = 0xFFFFFFFFu;
 const RECIP_U32_MAX = 1.0 / f32(U32_MAX);
 
 fn rand_f32(own_seed:u32) -> f32 {
+    var seed = own_seed;
+    return rand_f32_ptr(&seed);
+}
+
+fn rand_f32_ptr(own_seed:ptr<function, u32>) -> f32 {
+    *own_seed = rand_u32(*own_seed);
     // fract is to handle edge cases (divide not being perfect)
-    return fract(f32(rand_u32(own_seed)) * RECIP_U32_MAX);
+    return fract(f32(*own_seed) * RECIP_U32_MAX);
+}
+
+fn rand_vec3_f32(own_seed:ptr<function, u32>) -> vec3<f32> {
+    return vec3(rand_f32_ptr(own_seed), rand_f32_ptr(own_seed), rand_f32_ptr(own_seed));
 }
 
 fn safe_div(numerator: f32, denominator: f32) -> f32 {
+    return div_or(numerator, denominator, 0.0);
+}
+
+fn div_or(numerator: f32, denominator: f32, or: f32) -> f32 {
     if (near_zero(denominator))  {
-        return 0.0;
+        return or;
+    } else {
+        return numerator / denominator;
+    }
+}
+
+fn safe_div_vec3(numerator: vec3<f32>, denominator: f32) -> vec3<f32> {
+    if (near_zero(denominator))  {
+        return vec3<f32>(0.0);
     } else {
         return numerator / denominator;
     }

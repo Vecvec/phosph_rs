@@ -1,5 +1,5 @@
 use crate::camera::Camera;
-use crate::importance_sampling::DataBuffers;
+use crate::{BufferType, DataBuffers};
 #[cfg(feature = "wip-features")]
 use crate::importance_sampling::SpatialResampling;
 use crate::low_level::RayTracingShaderDST;
@@ -16,16 +16,7 @@ use std::time::Instant;
 use std::{iter, mem};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
-    AccelerationStructureFlags, AccelerationStructureGeometryFlags,
-    AccelerationStructureUpdateMode, Adapter, Backends, BindGroupDescriptor, BindGroupEntry,
-    BindingResource, BlasBuildEntry, BlasGeometries, BlasGeometrySizeDescriptors,
-    BlasTriangleGeometry, BlasTriangleGeometrySizeDescriptor, BufferAddress, BufferUsages,
-    CommandEncoderDescriptor, ComputePassDescriptor,
-    CreateBlasDescriptor, CreateTlasDescriptor, Device, DeviceDescriptor, Extent3d, Features,
-    IndexFormat, Instance, InstanceDescriptor, Origin3d, PresentMode,
-    Queue, RequestDeviceError, Surface, SurfaceError, TexelCopyBufferLayout, TexelCopyTextureInfo,
-    Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
-    TextureViewDescriptor, TextureViewDimension, TlasInstance, TlasPackage, VertexFormat,
+    AccelerationStructureFlags, AccelerationStructureGeometryFlags, AccelerationStructureUpdateMode, Adapter, Backends, BindGroupDescriptor, BindGroupEntry, BindingResource, BlasBuildEntry, BlasGeometries, BlasGeometrySizeDescriptors, BlasTriangleGeometry, BlasTriangleGeometrySizeDescriptor, BufferAddress, BufferUsages, CommandEncoderDescriptor, ComputePassDescriptor, CreateBlasDescriptor, CreateTlasDescriptor, DeviceDescriptor, ExperimentalFeatures, Extent3d, Features, IndexFormat, Instance, InstanceDescriptor, Origin3d, PresentMode, Queue, RequestDeviceError, Surface, SurfaceError, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension, TlasInstance, VertexFormat
 };
 
 const SIZE: (u32, u32) = (1280, 720);
@@ -269,25 +260,16 @@ fn run_shader(
     window: &mut PWindow,
     run_is: bool,
 ) -> Result<(), ExcErr> {
-    #[cfg(not(feature = "wip-features"))]
-    fn create_data_buffers(device: &Device, _width: u32, _height: u32) -> DataBuffers {
-        DataBuffers::new(device)
-    }
-
-    #[cfg(feature = "wip-features")]
-    fn create_data_buffers(device: &Device, width: u32, height: u32) -> DataBuffers {
-        DataBuffers::new(device, width, height)
-    }
-
-    let (device, queue) = block_on(adapter.request_device(
-        &DeviceDescriptor {
-            label: Some(adapter.get_info().name.as_str()),
-            required_features: shader.features() | Features::BGRA8UNORM_STORAGE,
-            required_limits: shader.limits(),
-            memory_hints: Default::default(),
-            trace: Default::default(),
+    let (device, queue) = block_on(adapter.request_device(&DeviceDescriptor {
+        label: Some(adapter.get_info().name.as_str()),
+        required_features: shader.features() | Features::BGRA8UNORM_STORAGE,
+        required_limits: shader.limits(),
+        memory_hints: Default::default(),
+        trace: Default::default(),
+        experimental_features: unsafe {
+            ExperimentalFeatures::enabled()
         },
-    ))
+    }))
     .map_err(ExcErr::Device)?;
     log::info!(
         "Found device:\n   {}, {:?}",
@@ -345,10 +327,12 @@ fn run_shader(
 
     load_background(&queue, &texture_back);
 
-    let mut buffers = create_data_buffers(
+    let mut buffers = DataBuffers::new(
         &device,
         window.get_size().0 as u32,
         window.get_size().1 as u32,
+        1_000,
+        BufferType::all(),
     );
 
     let (texture_bg, _) = textures::bind_group_from_textures(
@@ -372,7 +356,7 @@ fn run_shader(
         &[],
     );
 
-    let compute_pipeline  = shader.create_pipeline(
+    let compute_pipeline = shader.create_pipeline(
         NonZeroU32::new(1).unwrap(),
         NonZeroU32::new(2).unwrap(),
         NonZeroU32::new(2).unwrap(),
@@ -420,7 +404,7 @@ fn run_shader(
         index_count: Some(indices.len() as u32),
         flags: AccelerationStructureGeometryFlags::OPAQUE,
     };
-    let tlas = device.create_tlas(&CreateTlasDescriptor {
+    let mut tlas = device.create_tlas(&CreateTlasDescriptor {
         label: None,
         max_instances: 1,
         flags: AccelerationStructureFlags::PREFER_FAST_TRACE
@@ -438,9 +422,8 @@ fn run_shader(
             descriptors: vec![blas_size.clone()],
         },
     );
-    let mut tlas_package = TlasPackage::new(tlas);
 
-    *tlas_package.get_mut_single(0).unwrap() = Some(TlasInstance::new(
+    *tlas.get_mut_single(0).unwrap() = Some(TlasInstance::new(
         &blas,
         [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
         0,
@@ -493,7 +476,7 @@ fn run_shader(
                 transform_buffer_offset: None,
             }]),
         }),
-        iter::once(&tlas_package),
+        iter::once(&tlas),
     );
     queue.submit(Some(encoder.finish()));
 
@@ -520,7 +503,7 @@ fn run_shader(
             },
             BindGroupEntry {
                 binding: 2,
-                resource: BindingResource::AccelerationStructure(tlas_package.tlas()),
+                resource: BindingResource::AccelerationStructure(&tlas),
             },
         ],
     });
@@ -552,10 +535,12 @@ fn run_shader(
                     surface_config.height = max(window.get_size().1 as u32, 1);
                     surface.configure(&device, &surface_config);
 
-                    buffers = create_data_buffers(
+                    buffers = DataBuffers::new(
                         &device,
                         window.get_size().0 as u32,
                         window.get_size().1 as u32,
+                        1_000,
+                        BufferType::all(),
                     );
                     continue;
                 }
@@ -607,7 +592,7 @@ fn run_shader(
             }
         }
 
-        buffers.advance_frame(&mut encoder);
+        buffers.advance_frame(&mut encoder, BufferType::all());
 
         let blit = wgpu::util::TextureBlitter::new(&device, surface_config.format);
 

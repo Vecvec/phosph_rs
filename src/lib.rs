@@ -10,6 +10,7 @@ use wgpu::{
 };
 
 pub mod camera;
+mod data_buffer;
 pub mod debug;
 pub mod importance_sampling;
 pub mod intersection_handlers;
@@ -20,7 +21,7 @@ mod tests;
 pub mod textures;
 
 use crate::low_level::{IntersectionHandler, RayTracingShader, RayTracingShaderDST};
-pub use importance_sampling::DataBuffers;
+pub use data_buffer::{DataBuffers, BufferType};
 
 /// Refractive indices from https://refractiveindex.info/
 pub mod refractive_indices {
@@ -57,11 +58,11 @@ pub struct Shader {
 
 pub trait Descriptor {
     /// Creates a buffer init descriptor from the type
-    fn buffer_descriptor(&self) -> BufferInitDescriptor;
+    fn buffer_descriptor(&self) -> BufferInitDescriptor<'_>;
 }
 
 impl Shader {
-    pub fn descriptor(&self) -> ShaderModuleDescriptor {
+    pub fn descriptor(&self) -> ShaderModuleDescriptor<'_> {
         ShaderModuleDescriptor {
             #[cfg(debug_assertions)]
             label: Some(self.label),
@@ -146,7 +147,7 @@ fn pack2xu16(int: [u16; 2]) -> u32 {
 }
 
 impl Descriptor for [Material] {
-    fn buffer_descriptor(&self) -> BufferInitDescriptor {
+    fn buffer_descriptor(&self) -> BufferInitDescriptor<'_> {
         BufferInitDescriptor {
             label: Some("Materials"),
             contents: bytemuck::cast_slice(self),
@@ -176,8 +177,8 @@ pub struct DispatchSize {
 /// calculate the size for a dispatch of the ray-tracing compute function
 pub fn dispatch_size(width: u32, height: u32) -> DispatchSize {
     DispatchSize {
-        width: width.div_ceil(8),
-        height: height.div_ceil(8),
+        width: width.div_ceil(64),
+        height: height.div_ceil(1),
     }
 }
 
@@ -248,6 +249,18 @@ impl<S: RayTracingShader> RayTracer<S> {
             shader: PhantomData,
             extra_bgls: Vec::new(),
         }
+    }
+
+    pub fn required_features() -> wgpu::Features {
+        S::features()
+    }
+
+    pub fn combine_required_limits(base: wgpu::Limits) -> wgpu::Limits {
+        S::limits_or(base)
+    }
+
+    pub fn required_limits() -> wgpu::Limits {
+        S::limits_or(wgpu::Limits::default().using_minimum_supported_acceleration_structure_values())
     }
 
     pub fn set_intersection_handler(&mut self, handler: &dyn IntersectionHandler) {
@@ -321,7 +334,11 @@ const BINDINGS: &'static str = include_str!("bindings.wgsl");
 
 #[macro_export]
 macro_rules! bindings {
-    () => {&$crate::BINDINGS.to_string().add($crate::BINDINGS_MAYBE_VERTEX_RETURN)};
+    () => {
+        &$crate::BINDINGS
+            .to_string()
+            .add($crate::BINDINGS_MAYBE_VERTEX_RETURN)
+    };
 }
 
 /// matches the verices structure added to bindings.wgsl if feature `no-vertex-return` is enabled
@@ -334,9 +351,9 @@ pub struct Vertices {
 
 impl Vertices {
     pub fn append_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.reserve_exact(size_of_val(self) + size_of::<[f32;3]>());
+        bytes.reserve_exact(size_of_val(self) + size_of::<[f32; 3]>());
         bytes.extend_from_slice(&self.geometry_stride.to_ne_bytes());
-        bytes.extend_from_slice(&[0; size_of::<[f32;3]>()]);
+        bytes.extend_from_slice(&[0; size_of::<[f32; 3]>()]);
         bytes.extend_from_slice(bytemuck::cast_slice(&self.vertices));
     }
 }

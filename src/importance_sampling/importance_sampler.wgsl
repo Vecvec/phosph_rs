@@ -9,21 +9,13 @@ fn jacobian_determinant(q:Sample, r:Sample) -> f32 {
 
 const F32_MAX = 3.40282347e+38;
 
-fn safe_div_vec3(numerator: vec3<f32>, denominator: f32) -> vec3<f32> {
-    if (near_zero(denominator))  {
-        return vec3<f32>(0.0);
-    } else {
-        return numerator / denominator;
-    }
-}
-
 override IS_SAMPLES = 8u;
 override IS_SPACE = 61u;
 override DO_NOT_OVERRIDE = IS_SPACE * IS_SPACE;
 
 const MIN_DIST = 0.00001;
 
-@workgroup_size(8, 8, 1)
+@workgroup_size(64, 1, 1)
 @compute
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) work_id: vec3<u32>) {
     let screen_size = textureDimensions(output);
@@ -36,14 +28,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) wor
     var pixel_color = vec3<f32>();
     var sample_is_samples = 0u;
     var is_color = vec3<f32>();
-    var Rs = lights.samples[idx];
+    var Rs = gi_reservoirs[idx];
     var Z = 0u;
     let Rs_point = Rs.sample_point;
     var Rs_normal = u32_to_normalised(Rs.sample_normal);
     var Q = array<Reservoir, 129>();
     Q[0] = Rs;
     var i: u32;
-    let input_M = unpack4xU8(Rs.confidence8_valid8).x;
+    let input_M = unpack_confidance(Rs.packed_confidance_valid).confidance;
     var selected = 0u;
     var w_sum = p_hat(sam_from_res(Rs));
     var out_radiance = vec3<f32>();
@@ -71,7 +63,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) wor
             continue;
         }
         var work_idx = other_id.x + (other_id.y * screen_size.x);
-        var Rn = lights.samples[work_idx];
+        var Rn = gi_reservoirs[work_idx];
         var Rn_normal = u32_to_normalised(Rn.sample_normal);
         //Calculate geometric similarity between q and qn
         let similarity = dot(Rn_normal, Rs_normal);
@@ -128,13 +120,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) wor
     for (j = 0u; j < (sample_is_samples + 1u); j++) {
         // if ˆpqn (Rs.z) > 0 then Z ← Z + Rn.M
         let Rn = Q[j];
-        let confidence_j_p_j = f32(unpack4xU8(Rn.confidence8_valid8).x) * p_hat(sam_from_res(Rn));
+        //let confidence_j_p_j = f32(unpack_confidance(Rs.packed_confidance_valid).confidance) * p_hat(sam_from_res(Rn));
         if (selected == j) {
-            confidence_i_p_i = confidence_j_p_j;
+            //confidence_i_p_i = confidence_j_p_j;
         }
-        confidence_p_sum += confidence_j_p_j;
+        //confidence_p_sum += confidence_j_p_j;
         if (p_hat(sam_from_res(Rn)) > 0.0) {
-            Z = Z + (unpack4xU8(Rn.confidence8_valid8).x);
+            let confidance = unpack_confidance(Rn.packed_confidance_valid).confidance;
+            Z = Z + (confidance);
         }
     }
     let m_i = safe_div(confidence_i_p_i, confidence_p_sum);
@@ -146,21 +139,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) wor
     Rs.W = safe_div(Rs.w, Z_times_p_hat);
     //Rs.W = (confidence_i_p_i * Rs.w) / (confidence_p_sum * p_hat(sam_from_res(Rs)));
     //storageBarrier();
-    //lights.samples[idx] = Rs;
-    //pixel_color = pixel_color + (lights.samples[idx].sample.out_radiance * pixel_albedo) + pixel_emission;
+    //gi_reservoirs[idx] = Rs;
+    //pixel_color = pixel_color + (gi_reservoirs[idx].sample.out_radiance * pixel_albedo) + pixel_emission;
     if (sample_is_samples != 0u) {
         //let pix_is = fma(Rs.out_radiance * Rs.W, to_info(info[idx]).albedo, to_info(info[idx]).emission);
         //textureStore(output, id.xy, vec4<f32>(pix_is, 1.0));
     }
-    if (unpack4xU8(Rs.confidence8_valid8).y == 0) {
-        //return;
-    }
+    
     let pix_is = fma((Rs.out_radiance * Rs.W), to_info(info[idx]).albedo, to_info(info[idx]).emission);
     //let pix_is = fma(safe_div_vec3(out_radiance, f32(sample_is_samples)), to_info(info[idx]).albedo, to_info(info[idx]).emission);
     textureStore(output, id.xy, vec4<f32>(vec3(f32(sample_is_samples == 0)), 1.0));
     let diff = ((Rs.w) - (Z_times_p_hat)) / 50.0;
     textureStore(output, id.xy, vec4<f32>(vec3(max(diff, 0.0), max(-diff, 0.0), 0.0), 1.0));
     textureStore(output, id.xy, vec4<f32>(vec3(Rs.W / 1.0), 1.0));
+    textureStore(output, id.xy, vec4<f32>(vec3(f32(unpack_confidance(Rs.packed_confidance_valid).confidance) / 255.0), 1.0));
     textureStore(output, id.xy, vec4<f32>((pix_is), 1.0));
 }
 
