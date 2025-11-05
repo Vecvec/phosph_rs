@@ -60,10 +60,57 @@ struct MaterialsIdx {
     materials: array<u32>,
 }
 
+struct CompressedInfo {
+    arr: array<f32, 9>,
+}
+
 @group(0) @binding(0)
 var<storage> materials: array<Material>;
 @group(0) @binding(1)
 var<storage> material_idx: binding_array<MaterialsIdx>;
+
+@if(vertex_return)
+@group(0) @binding(2)
+var acc_struct: acceleration_structure<vertex_return>;
+
+@if(vertex_return)
+alias ray_query_maybe_vertex_return = ray_query<vertex_return>;
+
+@if(!vertex_return)
+@group(0) @binding(2)
+var acc_struct: acceleration_structure;
+
+@if(!vertex_return)
+struct Vertices {
+    geometry_stride: vec4<u32>,
+    vertices: array<vec3<f32>>,
+}
+
+@if(!vertex_return)
+@group(0) @binding(3)
+var<storage> vertices: binding_array<Vertices>;
+
+@if(!vertex_return)
+struct Indices {
+    indices: array<u32>,
+}
+
+@if(!vertex_return)
+@group(0) @binding(4)
+var<storage> indices: binding_array<Indices>;
+
+@if(!vertex_return)
+fn get_vertices(intersection: RayIntersection) -> array<vec3<f32>, 3> {
+    let instance_idx = intersection.instance_index;
+    let vertex_index = (vertices[instance_idx].geometry_stride.x * intersection.geometry_index) + (intersection.primitive_index * 3);
+    let index_1 = select(indices[instance_idx].indices[vertex_index], vertex_index, arrayLength(&indices[instance_idx].indices) == 1);
+    let index_2 = select(indices[instance_idx].indices[vertex_index + 1], vertex_index + 1, arrayLength(&indices[instance_idx].indices) == 1);
+    let index_3 = select(indices[instance_idx].indices[vertex_index + 2], vertex_index + 2, arrayLength(&indices[instance_idx].indices) == 1);
+    return array<vec3<f32>, 3>(vertices[instance_idx].vertices[index_1], vertices[instance_idx].vertices[index_2], vertices[instance_idx].vertices[index_3]);
+}
+
+@if(!vertex_return)
+alias ray_query_maybe_vertex_return = ray_query;
 
 @group(1) @binding(0)
 var<uniform> camera: Camera;
@@ -101,13 +148,6 @@ var tex_emission: binding_array<texture_2d<f32>>;
 var tex_attributes: binding_array<texture_2d<f32>>;
 @group(2) @binding(4)
 var tex_recolour: texture_2d<f32>;
-
-struct AABBIntersection {
-    hit: bool,
-    normal: vec3<f32>,
-    tangent: vec3<f32>,
-    t: f32,
-}
 
 fn unpack_2xu16(u:u32) -> vec2<u32> {
     let u1 = u & 0xFFFFu;

@@ -1,3 +1,5 @@
+import package::bindings::{ Reservoir, CompressedInfo, MarcovChainState, };
+
 const PI = 3.14159265358979323846264338327950288419716939937510;
 const HALF_PI = PI / 2.0;
 const TAU = 2.0 * PI;
@@ -144,10 +146,6 @@ fn sam_from_res(r: Reservoir) -> Sample {
         r.roughness,
         r.pdf,
     );
-}
-
-struct CompressedInfo {
-    arr: array<f32, 9>,
 }
 
 struct Info {

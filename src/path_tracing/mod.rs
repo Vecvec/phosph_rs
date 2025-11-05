@@ -1,34 +1,6 @@
+use wesl::include_wesl;
+
 use crate::low_level::RayTracingShader;
-use std::ops::Add;
-
-#[cfg(feature = "no-vertex-return")]
-macro_rules! replace_get_vertex {
-    ($i:expr) => {
-        $i.replace(
-            "GET_COMMITTED_VERTEX_POSITIONS",
-            "get_vertices(rayQueryGetCommittedIntersection(&rq))",
-        )
-    };
-}
-
-#[cfg(not(feature = "no-vertex-return"))]
-macro_rules! replace_get_vertex {
-    ($i:expr) => {
-        $i.replace(
-            "GET_COMMITTED_VERTEX_POSITIONS",
-            "getCommittedHitVertexPositions(&rq)",
-        )
-    };
-}
-
-macro_rules! include_general {
-    () => {
-        replace_get_vertex!(include_str!("general.wgsl"))
-            .to_string()
-            .add(include_str!("../importance_sampling/shared.wgsl"))
-            .add(crate::bindings!())
-    };
-}
 
 /// A ray-tracing shader, note that this requires ~6-10x the samples of the [Medium] shader.
 ///
@@ -41,7 +13,7 @@ unsafe impl RayTracingShader for High {
         Self
     }
     fn shader_source_without_intersection_handler() -> String {
-        include_general!().add(include_str!("high.wgsl"))
+        include_wesl!("high_path_tracing").to_string()
     }
     #[cfg(debug_assertions)]
     fn label() -> &'static str {
@@ -61,7 +33,7 @@ unsafe impl RayTracingShader for Medium {
         Self
     }
     fn shader_source_without_intersection_handler() -> String {
-        include_general!().add(include_str!("medium.wgsl"))
+        include_wesl!("medium_path_tracing").to_string()
     }
     #[cfg(debug_assertions)]
     fn label() -> &'static str {
@@ -81,7 +53,7 @@ unsafe impl RayTracingShader for Low {
         Self
     }
     fn shader_source_without_intersection_handler() -> String {
-        include_general!().add(include_str!("low.wgsl"))
+        include_wesl!("low_path_tracing").to_string()
     }
     #[cfg(debug_assertions)]
     fn label() -> &'static str {

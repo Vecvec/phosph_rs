@@ -18,7 +18,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 use std::{iter, mem};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
-#[cfg(feature = "no-vertex-return")]
+#[cfg(no_vertex_return)]
 use wgpu::BufferBinding;
 #[cfg(feature = "denoise")]
 use wgpu::MapMode;
@@ -467,9 +467,9 @@ fn main() {
         index_count: Some(indices.len() as u32),
         flags: AccelerationStructureGeometryFlags::OPAQUE,
     };
-    #[cfg(feature = "no-vertex-return")]
+    #[cfg(no_vertex_return)]
     const VERTEX_RETURN_FLAG: AccelerationStructureFlags = AccelerationStructureFlags::empty();
-    #[cfg(not(feature = "no-vertex-return"))]
+    #[cfg(not(no_vertex_return))]
     const VERTEX_RETURN_FLAG: AccelerationStructureFlags =
         AccelerationStructureFlags::ALLOW_RAY_HIT_VERTEX_RETURN;
     let mut tlas = device.create_tlas(&CreateTlasDescriptor {
@@ -568,7 +568,7 @@ fn main() {
         usage: BufferUsages::STORAGE,
     });
 
-    #[cfg(feature = "no-vertex-return")]
+    #[cfg(no_vertex_return)]
     let material_bg = device.create_bind_group(&BindGroupDescriptor {
         label: None,
         layout: &compute_pipeline.get_bind_group_layout(0),
@@ -605,7 +605,7 @@ fn main() {
             },
         ],
     });
-    #[cfg(not(feature = "no-vertex-return"))]
+    #[cfg(not(no_vertex_return))]
     let material_bg = device.create_bind_group(&BindGroupDescriptor {
         label: None,
         layout: &compute_pipeline.get_bind_group_layout(0),
@@ -897,7 +897,9 @@ impl<'a> OidnState<'a> {
                 res.unwrap();
                 send.send(()).unwrap()
             });
-        wgpu_device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        wgpu_device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
         recv.recv_timeout(Duration::from_secs(5)).unwrap();
         let (send, recv) = mpsc::channel();
         let mut data: Vec<f32> =
@@ -912,7 +914,9 @@ impl<'a> OidnState<'a> {
                 res.unwrap();
                 send.send(()).unwrap()
             });
-        wgpu_device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        wgpu_device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
         recv.recv_timeout(Duration::from_secs(5)).unwrap();
         self.wgpu_map_write
             .slice(..)

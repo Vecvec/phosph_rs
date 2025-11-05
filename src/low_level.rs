@@ -1,6 +1,6 @@
-use crate::{DynamicRayTracer, RayTracer, Shader};
-use std::num::NonZeroU32;
-use std::ops::Add;
+use crate::{DynamicRayTracer, RayTracer};
+use std::{num::NonZeroU32, rc::Rc};
+use wesl::Resolver;
 use wgpu::{
     BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType,
     BufferBindingType, BufferSize, Device, Features, Limits, PipelineLayout,
@@ -8,13 +8,31 @@ use wgpu::{
     StorageTextureAccess, TextureFormat, TextureSampleType, TextureViewDimension,
 };
 
-/// Source should return a string that contains functions with names appended with `intersect`.
-/// One function should have the definition
-/// ````wgsl
-/// fn intersect(intersection: RayIntersection) -> AABBIntersection
-/// ````
-/// It should not cause UB these are not fulfilled, but it is a logic error and may cause panics in code that
-/// otherwise should not fail.
+pub(crate) mod rc_resolver {
+    use std::{borrow::Cow, path::PathBuf, rc::Rc};
+
+    use wesl::{syntax::TranslationUnit, ModulePath, ResolveError, Resolver};
+
+    #[derive(Clone)]
+    pub(crate) struct RcResolver(pub(crate) Rc<dyn Resolver>);
+
+    impl Resolver for RcResolver {
+        fn resolve_source<'a>(&'a self, path: &ModulePath) -> Result<Cow<'a, str>, ResolveError> {
+            (*self.0).resolve_source(path)
+        }
+        fn resolve_module(&self, path: &ModulePath) -> Result<TranslationUnit, ResolveError> {
+            (*self.0).resolve_module(path)
+        }
+        fn display_name(&self, path: &ModulePath) -> Option<String> {
+            (*self.0).display_name(path)
+        }
+        fn fs_path(&self, path: &ModulePath) -> Option<PathBuf> {
+            (*self.0).fs_path(path)
+        }
+    }
+}
+
+/// Source in WESL. Must define a function with the signature `fn intersect(intersection: RayIntersection) -> AABBIntersection`
 ///
 /// Note: `AABBIntersection` is defined as
 /// ````wgsl
@@ -25,13 +43,24 @@ use wgpu::{
 /// }
 /// ````
 ///
-/// It is considered a logic error if the function does not pass validation (but should *not* cause UB)
+/// It is considered a logic error if the module does not pass validation (but should *not* cause UB)
+/// 
+/// # Defined Packages
+/// 
+/// `package::intersection` defines the AABBIntersection.
+/// `package::intersection_handler` is the module returned by `source`.
+/// `package::path_tracer` defines the main path tracer, and should *not* be used, its contents changing is not considered breaking.
+/// 
+/// You may specify a fallback resolver that will resolve after these defined packages are also called.
 ///
 /// # Safety:
 ///
 /// - The function returned by `source`, when executed, *must* return in a finite amount of time.
 pub unsafe trait IntersectionHandler: 'static {
     fn source(&self) -> String;
+    fn resolver(&self) -> Option<Rc<dyn Resolver>> {
+        None
+    }
     fn additional_bind_group_layouts(&self, _device: &Device) -> Vec<BindGroupLayout> {
         Vec::new()
     }
@@ -45,9 +74,9 @@ pub unsafe trait IntersectionHandler: 'static {
 pub unsafe trait RayTracingShader: Sized + 'static {
     fn new() -> Self;
     fn features() -> Features {
-        #[cfg(feature = "no-vertex-return")]
+        #[cfg(no_vertex_return)]
         let maybe_vertex_return = Features::empty();
-        #[cfg(not(feature = "no-vertex-return"))]
+        #[cfg(not(no_vertex_return))]
         let maybe_vertex_return = Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN;
         // features required to interact
         Features::EXPERIMENTAL_RAY_QUERY
@@ -80,7 +109,8 @@ pub unsafe trait RayTracingShader: Sized + 'static {
                 .max(limit.max_storage_buffer_binding_size),
             max_binding_array_elements_per_shader_stage: 500_000
                 .max(limit.max_binding_array_elements_per_shader_stage),
-            max_acceleration_structures_per_shader_stage: 16.max(limit.max_acceleration_structures_per_shader_stage),
+            max_acceleration_structures_per_shader_stage: 16
+                .max(limit.max_acceleration_structures_per_shader_stage),
             max_blas_geometry_count: ((1 << 24) - 1).max(limit.max_blas_geometry_count),
             max_tlas_instance_count: ((1 << 24) - 1).max(limit.max_tlas_instance_count),
             max_blas_primitive_count: (1 << 28).max(limit.max_blas_primitive_count),
@@ -90,14 +120,6 @@ pub unsafe trait RayTracingShader: Sized + 'static {
     fn shader_source_without_intersection_handler() -> String;
     #[cfg(debug_assertions)]
     fn label() -> &'static str;
-    fn create_shader() -> Shader {
-        Shader {
-            base: Self::shader_source_without_intersection_handler()
-                .add(include_str!("default_intersection_handler.wgsl")),
-            #[cfg(debug_assertions)]
-            label: Self::label(),
-        }
-    }
 }
 
 /// Exactly the same as the ray-tracing trait but takes itself so can be made into a dst
@@ -114,7 +136,6 @@ pub unsafe trait RayTracingShaderDST {
     fn shader_source_without_intersection_handler(&self) -> String;
     #[cfg(debug_assertions)]
     fn label(&self) -> &'static str;
-    fn create_shader(&self) -> Shader;
     fn dyn_ray_tracer(&self, device: &Device) -> DynamicRayTracer;
 }
 
@@ -139,9 +160,6 @@ unsafe impl<T: RayTracingShader> RayTracingShaderDST for T {
     fn label(&self) -> &'static str {
         T::label()
     }
-    fn create_shader(&self) -> Shader {
-        T::create_shader()
-    }
     fn dyn_ray_tracer(&self, device: &Device) -> DynamicRayTracer {
         RayTracer::<T>::new(device).dynamic()
     }
@@ -155,7 +173,7 @@ pub fn pipeline_layout(
     attribute_count: NonZeroU32,
     extra_bgls: &[BindGroupLayout],
 ) -> PipelineLayout {
-    #[cfg(not(feature = "no-vertex-return"))]
+    #[cfg(not(no_vertex_return))]
     let entries = &[
         BindGroupLayoutEntry {
             binding: 0,
@@ -186,7 +204,7 @@ pub fn pipeline_layout(
             count: None,
         },
     ];
-    #[cfg(feature = "no-vertex-return")]
+    #[cfg(no_vertex_return)]
     let entries = &[
         BindGroupLayoutEntry {
             binding: 0,

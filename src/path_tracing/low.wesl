@@ -1,3 +1,6 @@
+import package::path_tracing::general::{ sample_vndf_ggx, from_onb, };
+import package::importance_sampling::shared::{ rand_f32, to_onb, cosine_weighted_to_oren_nayer_improved };
+
 fn get_normal(ray_direction:vec3<f32>, normal:vec3<f32>, tangent:vec3<f32>, seed:u32, roughness:vec2<f32>) -> vec3<f32> {
     return normal;
 }

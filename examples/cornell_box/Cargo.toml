@@ -21,4 +21,11 @@ features = ["png", "jpeg"]
 [features]
 # Requires putting oidn into the correct directory (see its docs)
 denoise = ["oidn"]
-no-vertex-return = ["phosph_rs/no-vertex-return"]
+
+[lints.rust]
+# This feature disables the requirement of `EXPERIMENTAL_RAY_HIT_VERTEX_RETURN`.
+# This requires additional user tracking requirements which
+# can cause issues if incorrectly done. It is recommended
+# that this is enabled *after* intergration with an
+# application is complete and the bugs are fixed.
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(no_vertex_return)'] }

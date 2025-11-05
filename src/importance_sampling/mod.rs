@@ -1,8 +1,6 @@
 #[cfg(feature = "wip-features")]
 use crate::Shader;
 #[cfg(feature = "wip-features")]
-use std::ops::Add;
-#[cfg(feature = "wip-features")]
 use wgpu::Features;
 
 #[cfg(feature = "wip-features")]
@@ -16,11 +14,10 @@ impl SpatialResampling {
         Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
     }
     pub fn create_shader() -> Shader {
+        use wesl::include_wesl;
+
         Shader {
-            base: include_str!("importance_sampler.wgsl")
-                .to_string()
-                .add(include_str!("shared.wgsl"))
-                .add(include_str!("../bindings.wgsl")),
+            base: include_wesl!("importance_sampler").to_string(),
             #[cfg(debug_assertions)]
             label: "Importance Sampler",
         }

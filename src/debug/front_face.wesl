@@ -1,3 +1,11 @@
+import package::bindings::{
+    output,
+    output_normal,
+    output_albedo,
+    camera,
+    acc_struct,
+};
+
 struct Ray {
     direction: vec3f,
     origin: vec3f,

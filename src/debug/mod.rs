@@ -1,5 +1,5 @@
 use crate::low_level::RayTracingShader;
-use std::ops::Add;
+use wesl::include_wesl;
 
 /// Debugging shader to show whether the ray has hit the front face (green) or back face (red)
 /// useful for translucent materials as they determine whether the ray is entering by whether
@@ -11,10 +11,7 @@ unsafe impl RayTracingShader for FrontFace {
         Self
     }
     fn shader_source_without_intersection_handler() -> String {
-        include_str!("front_face.wgsl")
-            .to_string()
-            .add(include_str!("../bindings.wgsl"))
-            .add(include_str!("../importance_sampling/shared.wgsl"))
+        include_wesl!("front_face").to_string()
     }
     #[cfg(debug_assertions)]
     fn label() -> &'static str {
@@ -29,10 +26,7 @@ unsafe impl RayTracingShader for Reflectance {
         Self
     }
     fn shader_source_without_intersection_handler() -> String {
-        include_str!("reflectance.wgsl")
-            .to_string()
-            .add(include_str!("../bindings.wgsl"))
-            .add(include_str!("../importance_sampling/shared.wgsl"))
+        include_wesl!("reflectance").to_string()
     }
     #[cfg(debug_assertions)]
     fn label() -> &'static str {
@@ -47,10 +41,7 @@ unsafe impl RayTracingShader for Tangent {
         Self
     }
     fn shader_source_without_intersection_handler() -> String {
-        include_str!("tangent.wgsl")
-            .to_string()
-            .add(include_str!("../bindings.wgsl"))
-            .add(include_str!("../importance_sampling/shared.wgsl"))
+        include_wesl!("tangent").to_string()
     }
     #[cfg(debug_assertions)]
     fn label() -> &'static str {

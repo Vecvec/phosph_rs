@@ -1,3 +1,45 @@
+import package::default_mode::{ get_normal, conv_rough, make_diffuse, pick_ref_idx };
+import package::importance_sampling::shared::{ Sample, to_onb, copy_sign, rand_xz_vec3_f32, safe_div_vec3, vec3_near_zero, p_hat, update, safe_div, sam_from_res, from_info, TAU, DIFFUSE, METALLIC, TRANSPARENT, SKY, };
+import package::bindings::{
+    // Types
+    MarcovChainState,
+    Reservoir,
+    // aliases
+    ray_query_maybe_vertex_return,
+    // bindings
+    world_markov_chains,
+    old_world_markov_chains,
+    markov_chains,
+    old_markov_chains,
+    gi_reservoirs,
+    old_gi_reservoirs,
+    output,
+    output_normal,
+    output_albedo,
+    camera,
+    acc_struct,
+    materials,
+    material_idx,
+    tex_diffuse,
+    tex_emission,
+    tex_attributes,
+    bg,
+    sam,
+    info,
+    // functions
+    unpack_2xu16,
+    // constants
+    INVALID_KEY,
+    STATE_LOCKED,
+    STATE_UNLOCKED,
+    MAX_NUM_SAMPLES,
+    // Overrides
+    SAMPLES,
+};
+
+@if(!vertex_return)
+import package::bindings::{ get_vertices, };
+
 const BOUNCES = 5u;
 const VERTICES = BOUNCES + 1u;
 
@@ -976,7 +1018,13 @@ fn ray_hit(ray: ptr<function, Ray>) -> Intersection {
         var normal: vec3<f32>;
         var tangent: vec3<f32>;
         if (intersection.kind == RAY_QUERY_INTERSECTION_TRIANGLE) {
-            let vertices = GET_COMMITTED_VERTEX_POSITIONS;
+            var vertices: array<vec3<f32>, 3>;
+            @if(vertex_return) {
+                vertices = getCommittedVertexPositions(&rq);
+            }
+            @if(!vertex_return) {
+                vertices = get_vertices(rayQueryGetCommittedIntersection(&rq));
+            }
             tangent = correct_tangent(normalize(vertices[0] - vertices[1]));
             normal = normalize(cross(tangent, vertices[0] - vertices[2]));
         } else if (intersection.kind == RAY_QUERY_INTERSECTION_GENERATED) {

@@ -1,8 +1,10 @@
 use bytemuck::{Pod, Zeroable};
+use core::panic;
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
 use std::ops::{Add, Range};
+use wesl::{CompileOptions, Router, VirtualResolver, Wesl};
 use wgpu::util::BufferInitDescriptor;
 use wgpu::{
     BindGroupLayout, BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device,
@@ -20,8 +22,9 @@ pub mod path_tracing;
 mod tests;
 pub mod textures;
 
+use crate::low_level::rc_resolver::RcResolver;
 use crate::low_level::{IntersectionHandler, RayTracingShader, RayTracingShaderDST};
-pub use data_buffer::{DataBuffers, BufferType};
+pub use data_buffer::{BufferType, DataBuffers};
 
 /// Refractive indices from https://refractiveindex.info/
 pub mod refractive_indices {
@@ -239,16 +242,20 @@ pub struct RayTracer<S: RayTracingShader> {
     intersection_handler: String,
     shader: PhantomData<S>,
     extra_bgls: Vec<BindGroupLayout>,
+    resolver: Option<RcResolver>,
 }
 
 impl<S: RayTracingShader> RayTracer<S> {
     pub fn new(device: &Device) -> Self {
-        Self {
+        let mut tracer = Self {
             device: device.clone(),
-            intersection_handler: include_str!("default_intersection_handler.wgsl").to_string(),
+            intersection_handler: "".to_string(),
             shader: PhantomData,
             extra_bgls: Vec::new(),
-        }
+            resolver: None,
+        };
+        tracer.set_intersection_handler(&intersection_handlers::DefaultIntersectionHandler);
+        tracer
     }
 
     pub fn required_features() -> wgpu::Features {
@@ -260,12 +267,15 @@ impl<S: RayTracingShader> RayTracer<S> {
     }
 
     pub fn required_limits() -> wgpu::Limits {
-        S::limits_or(wgpu::Limits::default().using_minimum_supported_acceleration_structure_values())
+        S::limits_or(
+            wgpu::Limits::default().using_minimum_supported_acceleration_structure_values(),
+        )
     }
 
     pub fn set_intersection_handler(&mut self, handler: &dyn IntersectionHandler) {
         self.intersection_handler = handler.source();
         self.extra_bgls = handler.additional_bind_group_layouts(&self.device);
+        self.resolver = handler.resolver().map(|h| RcResolver(h));
     }
 
     pub fn create_pipeline(
@@ -284,12 +294,57 @@ impl<S: RayTracingShader> RayTracer<S> {
             attribute_count,
             &self.extra_bgls,
         );
+
+        // Compile the partial module with the intersection handler.
+        let mut compiler = Wesl::new_barebones();
+        compiler.set_options(CompileOptions {
+            validate: false,
+            ..Default::default()
+        });
+
+        let path_tracer_module = "import package::intersection_handler::intersect;\n\n"
+            .to_string()
+            .add(&S::shader_source_without_intersection_handler());
+
+        let mut resolver = VirtualResolver::new();
+        resolver.add_module(
+            "package::path_tracer".parse().unwrap(),
+            std::borrow::Cow::Owned(path_tracer_module),
+        );
+
+        resolver.add_module(
+            "package::intersection_handler".parse().unwrap(),
+            std::borrow::Cow::Owned(self.intersection_handler.clone()),
+        );
+
+        resolver.add_module(
+            "package::intersection".parse().unwrap(),
+            std::borrow::Cow::Borrowed(include_str!("intersection.wesl")),
+        );
+
+        let mut router = Router::new();
+        if let Some(resolver) = self.resolver.clone() {
+            router.mount_fallback_resolver(resolver);
+        }
+        router.mount_resolver("package".parse().unwrap(), resolver);
+        let mut compiler = Wesl::new_barebones().set_custom_resolver(router);
+
+        compiler.set_options(CompileOptions {
+            validate: false,
+            ..Default::default()
+        });
+
+        let compiled = compiler
+            .compile(&"package::path_tracer".parse().unwrap())
+            .inspect_err(|e| panic!("{e}"))
+            .unwrap()
+            .to_string();
+
         let shader = self.device.create_shader_module(ShaderModuleDescriptor {
             label: get_label::<S>(),
-            source: ShaderSource::Wgsl(Cow::Owned(
-                S::shader_source_without_intersection_handler().add(&self.intersection_handler),
-            )),
+            source: ShaderSource::Wgsl(Cow::Owned(compiled)),
         });
+
         self.device
             .create_compute_pipeline(&ComputePipelineDescriptor {
                 label: get_label::<S>(),
@@ -322,23 +377,6 @@ fn get_label<S: RayTracingShader>() -> Option<&'static str> {
 #[cfg(not(debug_assertions))]
 fn get_label<S: RayTracingShader>() -> Option<&'static str> {
     None
-}
-
-#[cfg(feature = "no-vertex-return")]
-const BINDINGS_MAYBE_VERTEX_RETURN: &'static str = include_str!("bindings_no_vertex_return.wgsl");
-
-#[cfg(not(feature = "no-vertex-return"))]
-const BINDINGS_MAYBE_VERTEX_RETURN: &'static str = include_str!("bindings_vertex_return.wgsl");
-
-const BINDINGS: &'static str = include_str!("bindings.wgsl");
-
-#[macro_export]
-macro_rules! bindings {
-    () => {
-        &$crate::BINDINGS
-            .to_string()
-            .add($crate::BINDINGS_MAYBE_VERTEX_RETURN)
-    };
 }
 
 /// matches the verices structure added to bindings.wgsl if feature `no-vertex-return` is enabled

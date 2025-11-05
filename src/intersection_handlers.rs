@@ -4,6 +4,6 @@ pub struct DefaultIntersectionHandler;
 
 unsafe impl IntersectionHandler for DefaultIntersectionHandler {
     fn source(&self) -> String {
-        include_str!("default_intersection_handler.wgsl").to_string()
+        include_str!("default_intersection_handler.wesl").to_string()
     }
 }
