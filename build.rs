@@ -20,7 +20,7 @@ fn standard_compiler(validate: bool, rm_dead_code: bool) -> Wesl<StandardResolve
 }
 
 mod mapping_resolver {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, path::PathBuf};
 
     use wesl::{ModulePath, Resolver};
 
@@ -36,6 +36,16 @@ mod mapping_resolver {
         ) -> Result<std::borrow::Cow<'a, str>, wesl::ResolveError> {
             let path = self.map.get(path).unwrap_or(path);
             self.resolver.resolve_source(path)
+        }
+
+        fn display_name(&self, path: &ModulePath) -> Option<String> {
+            let path = self.map.get(path).unwrap_or(path);
+            self.resolver.display_name(path)
+        }
+
+        fn fs_path(&self, path: &ModulePath) -> Option<PathBuf> {
+            let path = self.map.get(path).unwrap_or(path);
+            self.resolver.fs_path(path)
         }
     }
 }
