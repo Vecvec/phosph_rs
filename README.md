@@ -27,6 +27,10 @@ call `descriptor` on a slice of `Material`s.
 samples by the recommended changes, these do not change performance consistently.
 
 ### Texture Loading
+For ease of use, a texture loader is provided, however, you may wish for textures in a different format,
+in which case you should look at how the bind group is constructed in this. Otherwise, se below for using
+the default texture loader
+
 Call `TextureLoader::new()` or `TextureLoader::default()` to create a blank texture loader. Call 
 either `texture_loader.load` with a diffuse texture file name and optional lit and attribute texture
 file names, or call `texture_loader.load_from_bytes` with the bytes of a diffuse texture, and optionally
@@ -46,9 +50,14 @@ Note: the attribute texture has the red color channel for roughness, and the oth
 Call `Camera::new` with projection and view matrices or construct it with inverted projection
 and view matrices, call `descriptor` to get a buffer descriptor.
 
+### Tangents
+
+The tangent for a triangle is calculate based on its first and second vertex positions (indexes 0 and 1).
+However, it is corrected so the largest axis is positive. Favoring x
+
 ### Roughness
 This library supports four components in an attributes texture (x and y for the base material and z and w for
-a transparent surface in the same place)
+a transparent surface in the same place). 
 
 ## Goal
 

@@ -44,13 +44,13 @@ pub(crate) mod rc_resolver {
 /// ````
 ///
 /// It is considered a logic error if the module does not pass validation (but should *not* cause UB)
-/// 
+///
 /// # Defined Packages
-/// 
+///
 /// `package::intersection` defines the AABBIntersection.
 /// `package::intersection_handler` is the module returned by `source`.
 /// `package::path_tracer` defines the main path tracer, and should *not* be used, its contents changing is not considered breaking.
-/// 
+///
 /// You may specify a fallback resolver that will resolve after these defined packages are also called.
 ///
 /// # Safety:

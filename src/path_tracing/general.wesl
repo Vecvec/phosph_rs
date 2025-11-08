@@ -455,7 +455,7 @@ const FLOAT_MAX = 3.40282347E+38;
 //    }
 //}
 
-fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, p_hat: f32, seed: u32, not_vmf: bool, old_state: MarcovChainState, confidance: f32) -> MarcovChainState {
+fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, p_hat: f32, seed: u32, not_vmf: bool, old_state: MarcovChainState, confidence: f32) -> MarcovChainState {
     var state = old_state;
     if not_vmf {
         // While the origional paper used this, the newer one instead resets if it couldn't find the light
@@ -474,7 +474,7 @@ fn update_marcov_state(/* x0: vec3<f32>, */ x1: vec3<f32>, x2: vec3<f32>, p_hat:
             return state;
         }
         state.num_samples = min(state.num_samples + 1, MARCOV_CHAIN_SAMPLE_CLAMP);
-        let alpha = max(1.0 / f32(state.num_samples), 0.01) * confidance;
+        let alpha = max(1.0 / f32(state.num_samples), 0.01) * confidence;
         state.weight_sum = mix(state.weight_sum, score, alpha);
         state.light_source = mix(state.light_source, score * x2, alpha);
         let mean = normalize(get_light_dir(state, x1));
