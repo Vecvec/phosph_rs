@@ -6,13 +6,15 @@ var<storage, read_write> eof_gi_reservoirs: array<Reservoir>;
 
 override CONFIDENCE_CAP = 30u;
 
+var<push_constant> offset: u32;
+
 @compute
-@workgroup_size(32, 1, 1)
+@workgroup_size(256, 1, 1)
 fn process_gi_reservoirs(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= arrayLength(&eof_gi_reservoirs) {
+    if (id.x + offset) >= arrayLength(&eof_gi_reservoirs) {
         return;
     }
-    var reservoir = eof_gi_reservoirs[id.x];
+    var reservoir = eof_gi_reservoirs[id.x + offset];
     // clamp reservoir max while also recalculating the reservoir.w
     var confidance_valid = unpack_confidance(reservoir.packed_confidance_valid);
     if confidance_valid.confidance > CONFIDENCE_CAP {
@@ -21,7 +23,7 @@ fn process_gi_reservoirs(@builtin(global_invocation_id) id: vec3<u32>) {
         confidance_valid.confidance = new_confidance;
         reservoir.w *= confidance_mutiplier;
         reservoir.packed_confidance_valid = pack_confidance(confidance_valid);
-        eof_gi_reservoirs[id.x] = reservoir;
+        eof_gi_reservoirs[id.x + offset] = reservoir;
     }
 }
 
@@ -38,8 +40,8 @@ fn div_ceil(num: u32, denom: u32) -> u32 {
     }
 }
 
-override SAMPLE_MULTIPLIER = 8u;
-override SAMPLE_DIVISOR = 9u;
+override SAMPLE_MULTIPLIER = 3u;
+override SAMPLE_DIVISOR = 4u;
 
 override SAM_MUL = min(SAMPLE_MULTIPLIER, SAMPLE_DIVISOR);
 
@@ -66,28 +68,30 @@ fn correct_radiance(idx: u32) {
 }
 
 @compute
-@workgroup_size(32, 1, 1)
+@workgroup_size(256, 1, 1)
 fn process_world_markov_chains(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= arrayLength(&eof_world_markov_chains) {
+    let idx = id.x + offset;
+
+    if idx >= arrayLength(&eof_world_markov_chains) {
         return;
     }
 
-    if (eof_world_markov_chains[id.x].timeout) == 0 {
+    if (eof_world_markov_chains[idx].timeout) == 0 {
         // reset the radiance cache, but since the markov chain is stored each time, instead of updated, we don't need to reset it.
-        atomicStore(&eof_world_markov_chains[id.x].secondary_hash, 0);
-        atomicStore(&eof_world_markov_chains[id.x].num_samples, 0);
-        atomicStore(&eof_world_markov_chains[id.x].luminance[0], 0);
-        atomicStore(&eof_world_markov_chains[id.x].luminance[1], 0);
-        atomicStore(&eof_world_markov_chains[id.x].luminance[2], 0);
-        atomicStore(&eof_world_markov_chains[id.x].lock, 0);
+        atomicStore(&eof_world_markov_chains[idx].secondary_hash, 0);
+        atomicStore(&eof_world_markov_chains[idx].num_samples, 0);
+        atomicStore(&eof_world_markov_chains[idx].luminance[0], 0);
+        atomicStore(&eof_world_markov_chains[idx].luminance[1], 0);
+        atomicStore(&eof_world_markov_chains[idx].luminance[2], 0);
+        atomicStore(&eof_world_markov_chains[idx].lock, 0);
         return;
     }
 
     // Lower the number of samples in the radiance cache (maintaining same radiance) as well as in the markov chain.
-    correct_radiance(id.x);
+    correct_radiance(idx);
 
-    let new_chain_num_samples = div_ceil(atomicLoad(&eof_world_markov_chains[id.x].chain.num_samples) * SAM_MUL, SAMPLE_DIVISOR);
-    atomicStore(&eof_world_markov_chains[id.x].chain.num_samples, new_chain_num_samples);
-    eof_world_markov_chains[id.x].timeout--;
+    let new_chain_num_samples = div_ceil(atomicLoad(&eof_world_markov_chains[idx].chain.num_samples) * SAM_MUL, SAMPLE_DIVISOR);
+    atomicStore(&eof_world_markov_chains[idx].chain.num_samples, new_chain_num_samples);
+    eof_world_markov_chains[idx].timeout--;
 }
 

@@ -2,10 +2,7 @@ use std::borrow::Cow;
 
 use crate::low_level::out_bgl;
 use wgpu::{
-    BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BindingResource, Buffer, BufferAddress, BufferDescriptor, BufferUsages, CommandEncoder,
-    ComputePipelineDescriptor, Device, Limits, PipelineLayoutDescriptor, ShaderModuleDescriptor,
-    ShaderStages,
+    BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, Buffer, BufferAddress, BufferDescriptor, BufferUsages, CommandEncoder, ComputePipelineDescriptor, Device, Limits, PipelineLayoutDescriptor, PushConstantRange, ShaderModuleDescriptor, ShaderStages
 };
 
 pub mod internal {
@@ -36,14 +33,25 @@ struct MarkovChain {
     _align: u32,
 }
 
+/// Matches atomic markov chain in bindings.
+#[repr(C)]
+struct AtomicMarkovChain {
+    _light_source: [f32; 3],
+    _mean_cosine: f32,
+    _weight_sum: f32,
+    _num_samples: u32,
+    _score: f32,
+    // align unneeded.
+}
+
 #[repr(C)]
 struct WorldMarkovStorage {
     _secondary_hash: u32,
     _num_samples: u32,
     _radiance: [u32; 3],
     _lock: u32,
+    _chain: AtomicMarkovChain,
     _timeout: u32,
-    _chain: MarkovChain,
 }
 
 struct TemporalBuffers {
@@ -172,7 +180,10 @@ impl DataBuffers {
         let processing_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("(phosph_rs internal) End of frame processing pipeline layout"),
             bind_group_layouts: &[&processing_bgl],
-            push_constant_ranges: &[],
+            push_constant_ranges: &[PushConstantRange {
+                stages: ShaderStages::COMPUTE,
+                range: 0..4,
+            }],
         });
 
         let gi_reservoir_processing_pipeline =
@@ -234,18 +245,19 @@ impl DataBuffers {
             buffers: &DataBuffers,
             encoder: &mut CommandEncoder,
             pipeline: &wgpu::ComputePipeline,
-            mut num_workgroups: u64,
+            mut num_workgroups: u32,
         ) {
             while num_workgroups != 0 {
                 let execution_work_groups = buffers
                     .limits
                     .max_compute_workgroups_per_dimension
                     .min(num_workgroups.try_into().unwrap_or(<u32>::MAX));
-                num_workgroups -= execution_work_groups as u64;
+                num_workgroups -= execution_work_groups;
 
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &buffers.processing_bind_group, &[]);
+                pass.set_push_constants(0, &num_workgroups.to_ne_bytes());
                 pass.dispatch_workgroups(execution_work_groups, 1, 1);
             }
         }
@@ -256,7 +268,7 @@ impl DataBuffers {
                 self,
                 encoder,
                 &self.gi_reservoir_processing_pipeline,
-                self.spatial_resampling.current.size().div_ceil(32),
+                ((self.spatial_resampling.current.size() / size_of::<crate::importance_sampling::Reservoir>() as u64) as u32).div_ceil(256),
             );
             self.spatial_resampling.advance_frame(encoder);
         } else {
@@ -275,7 +287,7 @@ impl DataBuffers {
                 self,
                 encoder,
                 &self.world_markov_chain_processing_pipeline,
-                self.spatial_resampling.current.size().div_ceil(32),
+                ((self.markov_chain_world_space.current.size() / size_of::<WorldMarkovStorage>() as u64) as u32).div_ceil(256),
             );
             encoder.copy_buffer_to_buffer(
                 &self.markov_chain_world_space.current,
