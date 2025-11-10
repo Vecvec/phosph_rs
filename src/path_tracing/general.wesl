@@ -137,26 +137,15 @@ fn quantize_packed2x16snorm(initial: u32) -> u32 {
     return pack2x16snorm(clamp(round(unpack2x16snorm(initial) / QUANTIZE_BLOCK_SIZE) * QUANTIZE_BLOCK_SIZE, vec2(-1.0), vec2(1.0)));
 }
 
-const X_GREATEST = 0u;
-const Y_GREATEST = 1u;
-const Z_GREATEST = 2u;
+// generate a (highly quantized) version of the incoming vector.
+fn incoming_hash(vector: vec3<f32>) -> u32 {
+    var hash = 0u;
 
-fn pick_greatest_dir(vector: vec3<f32>) -> u32 {
-    let vec_abs = abs(vector);
-    let max = max(vec_abs.x, max(vec_abs.y, vec_abs.z));
-    var greatest: u32;
-    if max == vec_abs.x {
-        greatest = X_GREATEST;
-    } else if max == vec_abs.y {
-        greatest = Y_GREATEST;
-    } else {
-        greatest = Z_GREATEST;
-    }
+    hash |= u32(vector.x > 0.0) << 0; 
+    hash |= u32(vector.y > 0.0) << 1;
+    hash |= u32(vector.z > 0.0) << 2;
 
-    if vector[greatest] < 0.0 {
-        greatest |= 4u;
-    }
-    return greatest;
+    return hash;
 }
 
 // Seems like the paper counts 1 as a prime.
@@ -164,7 +153,7 @@ const PRIMES = vec4<u32>(1, 687603047, 571899763, 894271171);
 
 fn primary_hasher(loc: vec3<i32>, normal: vec3<f32>, incoming: vec3<f32>) -> u32 {
     let normal_u32 = normalised_to_u32(normal) & TOP_VEC2_u16_8_BITS;
-    let incoming_u32 = rand_u32(pick_greatest_dir(incoming));
+    let incoming_u32 = rand_u32(incoming_hash(incoming));
     let to_hash = vec4<u32>(bitcast<vec3<u32>>(loc), (normal_u32));
     let hash = PRIMES * to_hash;
     return (((hash.x ^ hash.y) ^ hash.z) ^ hash.w) ^ (incoming_u32 * 840057787);
@@ -629,7 +618,7 @@ fn rt_sample(coord: vec2<u32>, own_seed: u32, should_push:bool) -> SampleReturn 
             let new_pos = at(&ray, intersection.t);
             // We have at least hit the scene twice (this is our second time)
             if i != 0u {
-                let radiance_reflected = strip_NaN_vec3((intersection.color * grid_load_radiance_estimate(new_pos, intersection.normal, last_dir)) * cached_brdf / cached_pdf);
+                let radiance_reflected = strip_NaN_vec3((intersection.color * grid_load_radiance_estimate(new_pos, intersection.normal, ray.direction)) * cached_brdf / cached_pdf);
                 let radiance_out = (intersection.emission * cached_brdf / cached_pdf);
                 grid_add_radiance(ray.origin, last_normal, last_dir, radiance_out + radiance_reflected);
                 let weight = length(radiance_out + (radiance_reflected));

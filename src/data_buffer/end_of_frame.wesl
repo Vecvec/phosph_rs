@@ -40,8 +40,8 @@ fn div_ceil(num: u32, denom: u32) -> u32 {
     }
 }
 
-override SAMPLE_MULTIPLIER = 3u;
-override SAMPLE_DIVISOR = 4u;
+override SAMPLE_MULTIPLIER = 8u;
+override SAMPLE_DIVISOR = 9u;
 
 override SAM_MUL = min(SAMPLE_MULTIPLIER, SAMPLE_DIVISOR);
 
@@ -90,8 +90,8 @@ fn process_world_markov_chains(@builtin(global_invocation_id) id: vec3<u32>) {
     // Lower the number of samples in the radiance cache (maintaining same radiance) as well as in the markov chain.
     correct_radiance(idx);
 
-    let new_chain_num_samples = div_ceil(atomicLoad(&eof_world_markov_chains[idx].chain.num_samples) * SAM_MUL, SAMPLE_DIVISOR);
-    atomicStore(&eof_world_markov_chains[idx].chain.num_samples, new_chain_num_samples);
+    //let new_chain_num_samples = div_ceil(atomicLoad(&eof_world_markov_chains[idx].chain.num_samples) * SAM_MUL, SAMPLE_DIVISOR);
+    //atomicStore(&eof_world_markov_chains[idx].chain.num_samples, new_chain_num_samples);
     eof_world_markov_chains[idx].timeout--;
 }
 
