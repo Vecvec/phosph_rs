@@ -1,14 +1,14 @@
 use cgmath::{Matrix4, Point3, Vector3};
 use futures::executor::block_on;
 use glfw::{fail_on_errors, ClientApiHint, WindowHint, WindowMode};
-use phosph_rs::camera::Camera;
-use phosph_rs::importance_sampling::SpatialResampling;
-use phosph_rs::textures::TextureLoader;
-use phosph_rs::{
+use lambent::camera::Camera;
+use lambent::importance_sampling::SpatialResampling;
+use lambent::textures::TextureLoader;
+use lambent::{
     dispatch_size, low_level::pipeline_layout, path_tracing, textures, DataBuffers, Descriptor,
     Material, MaterialType,
 };
-use phosph_rs::{refractive_indices, BufferType};
+use lambent::{refractive_indices, BufferType};
 use std::cmp::{max, min};
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
@@ -38,7 +38,7 @@ use wgpu::{
     TlasInstance, VertexFormat, VertexState,
 };
 
-type RayTracer = phosph_rs::RayTracer<path_tracing::Medium>;
+type RayTracer = lambent::RayTracer<path_tracing::Medium>;
 
 const SIZE: u32 = 320;
 
@@ -174,7 +174,7 @@ fn main() {
     let light_pos = [0.5 - (LIGHT_SIZE / 2.0), 0.5 + (LIGHT_SIZE / 2.0)];
     const SMALL_BLOCK_OFFSET: f32 = 0.15;
     const LIGHT_HEIGHT: f32 = 0.999999;
-    let vertices = phosph_rs::Vertices {
+    let vertices = lambent::Vertices {
         geometry_stride: 0,
         vertices: vec![
             [0.0f32, 0.0, 0.0, 0.0],                         //0

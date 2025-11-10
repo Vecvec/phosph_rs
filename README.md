@@ -1,4 +1,4 @@
- # Phosph-rs
+ # [Lambent](https://dictionary.cambridge.org/dictionary/english/lambent)
 
 **Work in Progress**
 

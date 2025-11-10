@@ -1,6 +1,6 @@
 workspace = { members = [ "examples/cornell_box"] }
 [package]
-name = "phosph_rs"
+name = "lambent"
 version = "0.1.0"
 edition = "2021"
 
