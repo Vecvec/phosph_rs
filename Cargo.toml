@@ -3,6 +3,8 @@ workspace = { members = [ "examples/cornell_box"] }
 name = "lambent"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/Vecvec/Lambent"
+description = "A ray / path tracer built on wgpu."
 
 [dependencies]
 wgpu = "27"
