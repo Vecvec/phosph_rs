@@ -11,9 +11,9 @@ bytemuck = { version =  "1.22.0", features = ["derive"] }
 cgmath = "0.18"
 half = "2.4.1"
 bitflags = "2.9"
-# want to use this version, but need git version for rt support
-# wesl = { version = "0.2.0", features = ["naga_ext"] }
-wesl = { git = "https://github.com/wgsl-tooling-wg/wesl-rs.git", rev = "64ae237", features = ["naga-ext"] }
+# need trunk for rt support, so should switch to that as soon as possible
+wesl = { version = "0.2.0", features = ["naga_ext"] }
+# wesl = { git = "https://github.com/wgsl-tooling-wg/wesl-rs.git", rev = "64ae237", features = ["naga-ext"] }
 
 [dependencies.image]
 version = "0.25.1"
@@ -26,9 +26,9 @@ env_logger = "0.11"
 glfw = "0.59.0"
 
 [build-dependencies]
-# want to use this version, but need git version for rt support
-# wesl = { version = "0.2.0", features = ["naga_ext"] }
-wesl = { git = "https://github.com/wgsl-tooling-wg/wesl-rs.git", rev = "64ae237", features = ["naga-ext"] }
+# need trunk for rt support, so should switch to that as soon as possible
+wesl = { version = "0.2.0", features = ["naga_ext"] }
+# wesl = { git = "https://github.com/wgsl-tooling-wg/wesl-rs.git", rev = "64ae237", features = ["naga-ext"] }
 
 [features]
 wip-features = []
