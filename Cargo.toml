@@ -5,6 +5,7 @@ version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/Vecvec/Lambent"
 description = "A ray / path tracer built on wgpu."
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 wgpu = "27"
